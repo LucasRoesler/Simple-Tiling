@@ -371,23 +371,33 @@ class Tiler {
         this._innerGap = this._settings.get_int("inner-gap");
         this._outerGapVertical = this._settings.get_int("outer-gap-vertical");
         this._outerGapHorizontal = this._settings.get_int("outer-gap-horizontal");
+        this._loadExceptions(); // Reload exceptions when settings change
         this.queueTile();
     }
 
     _loadExceptions() {
+        let exceptions = [];
+
+        // Load exceptions from settings
+        const settingsExceptions = this._settings.get_strv('window-exceptions');
+        exceptions = exceptions.concat(settingsExceptions);
+
+        // Load exceptions from file (for backward compatibility)
         const file = Gio.file_new_for_path(Me.path + "/exceptions.txt");
-        if (!file.query_exists(null)) {
-            this._exceptions = [];
-            return;
+        if (file.query_exists(null)) {
+            const [ok, data] = file.load_contents(null);
+            if (ok) {
+                const fileExceptions = ByteArray.toString(data)
+                    .split("\n")
+                    .map((l) => l.trim())
+                    .filter((l) => l && !l.startsWith("#"))
+                    .map((l) => l.toLowerCase());
+                exceptions = exceptions.concat(fileExceptions);
+            }
         }
-        const [ok, data] = file.load_contents(null);
-        this._exceptions = ok
-            ? ByteArray.toString(data)
-                  .split("\n")
-                  .map((l) => l.trim())
-                  .filter((l) => l && !l.startsWith("#"))
-                  .map((l) => l.toLowerCase())
-            : [];
+
+        // Remove duplicates and store
+        this._exceptions = [...new Set(exceptions)];
     }
 
     _isException(win) {

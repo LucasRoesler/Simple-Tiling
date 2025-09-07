@@ -58,6 +58,12 @@
       <summary>Behavior for newly opened windows.</summary>
       <description>Determines if a new window is added as master or stack window.</description>
     </key>
+
+    <key name="window-exceptions" type="as">
+      <default>[]</default>
+      <summary>Window exceptions list</summary>
+      <description>List of application identifiers (WM_CLASS or App ID) that should be ignored by the tiling manager and kept floating.</description>
+    </key>
     
   </schema>
 </schemalist>

@@ -68,6 +68,16 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             settings.set_string('new-window-behavior', newVal);
         });
 
+        // ── WINDOW EXCEPTIONS ──────────────────────────────────────────
+        const groupExceptions = new Adw.PreferencesGroup({
+            title: 'Window Exceptions',
+            description: 'Applications that should be ignored by the tiling manager and kept floating.'
+        });
+        page.add(groupExceptions);
+
+        // Create the exceptions list
+        this._createExceptionsList(groupExceptions, settings);
+
         // ── KEYBINDINGS ────────────────────────────────────────────
         const groupKeys = new Adw.PreferencesGroup({ title: 'Keybindings' });
         page.add(groupKeys);
@@ -87,5 +97,101 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         });
         rowKeys.add_suffix(btnOpenKeyboard);
         rowKeys.set_activatable_widget(btnOpenKeyboard);
+    }
+
+    _createExceptionsList(parent, settings) {
+        // Header row with add button
+        const headerRow = new Adw.ActionRow({
+            title: 'Application Exceptions',
+            subtitle: 'Applications listed here will be centered and kept floating instead of being tiled.'
+        });
+
+        const addButton = new Gtk.Button({
+            icon_name: 'list-add-symbolic',
+            css_classes: ['flat'],
+            tooltip_text: 'Add Exception'
+        });
+
+        addButton.connect('clicked', () => {
+            this._showAddExceptionDialog(settings, parent);
+        });
+
+        headerRow.add_suffix(addButton);
+        parent.add(headerRow);
+
+        // Current exceptions list
+        const exceptions = settings.get_strv('window-exceptions');
+        for (const exception of exceptions) {
+            this._addExceptionRow(parent, settings, exception);
+        }
+
+        // Also add info about file-based exceptions
+        const fileInfoRow = new Adw.ActionRow({
+            title: 'File-based Exceptions',
+            subtitle: 'The extension also loads exceptions from exceptions.txt in the extension directory.',
+            css_classes: ['dim-label']
+        });
+        parent.add(fileInfoRow);
+    }
+
+    _addExceptionRow(parent, settings, exception) {
+        const row = new Adw.ActionRow({
+            title: exception,
+            subtitle: 'Application identifier (WM_CLASS or App ID)'
+        });
+
+        const removeButton = new Gtk.Button({
+            icon_name: 'list-remove-symbolic',
+            css_classes: ['flat', 'destructive-action'],
+            tooltip_text: 'Remove Exception'
+        });
+
+        removeButton.connect('clicked', () => {
+            const exceptions = settings.get_strv('window-exceptions');
+            const index = exceptions.indexOf(exception);
+            if (index > -1) {
+                exceptions.splice(index, 1);
+                settings.set_strv('window-exceptions', exceptions);
+                row.get_parent().remove(row);
+            }
+        });
+
+        row.add_suffix(removeButton);
+        parent.add(row);
+    }
+
+    _showAddExceptionDialog(settings, parentGroup) {
+        const dialog = new Adw.MessageDialog({
+            heading: 'Add Window Exception',
+            body: 'Enter the application identifier (WM_CLASS or App ID) to exclude from tiling:'
+        });
+
+        const entry = new Adw.EntryRow({
+            title: 'Application Identifier',
+            text: ''
+        });
+
+        dialog.set_extra_child(entry);
+        dialog.add_response('cancel', 'Cancel');
+        dialog.add_response('add', 'Add');
+        dialog.set_response_appearance('add', Adw.ResponseAppearance.SUGGESTED);
+
+        dialog.connect('response', (dialog, response) => {
+            if (response === 'add') {
+                const newException = entry.get_text().trim().toLowerCase();
+                if (newException) {
+                    const exceptions = settings.get_strv('window-exceptions');
+                    if (!exceptions.includes(newException)) {
+                        exceptions.push(newException);
+                        settings.set_strv('window-exceptions', exceptions);
+                        // Add the new row to the parent group
+                        this._addExceptionRow(parentGroup, settings, newException);
+                    }
+                }
+            }
+            dialog.close();
+        });
+
+        dialog.present();
     }
 }

@@ -305,21 +305,33 @@ class Tiler {
         this._innerGap          = this.settings.get_int('inner-gap');
         this._outerGapVertical  = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal= this.settings.get_int('outer-gap-horizontal');
+        this._loadExceptions(); // Reload exceptions when settings change
         this.queueTile();
     }
 
     _loadExceptions() {
+        let exceptions = [];
+
+        // Load exceptions from settings
+        const settingsExceptions = this.settings.get_strv('window-exceptions');
+        exceptions = exceptions.concat(settingsExceptions);
+
+        // Load exceptions from file (for backward compatibility)
         const file = Gio.File.new_for_path(this._extension.path + '/exceptions.txt');
-        if (!file.query_exists(null)) { this._exceptions=[]; return; }
+        if (file.query_exists(null)) {
+            const [ok, data] = file.load_contents(null);
+            if (ok) {
+                const txt = new TextDecoder('utf-8').decode(data);
+                const fileExceptions = txt.split('\n')
+                                          .map(l => l.trim())
+                                          .filter(l => l && !l.startsWith('#'))
+                                          .map(l => l.toLowerCase());
+                exceptions = exceptions.concat(fileExceptions);
+            }
+        }
 
-        const [ok,data] = file.load_contents(null);
-        if (!ok) { this._exceptions=[]; return; }
-
-        const txt = new TextDecoder('utf-8').decode(data);
-        this._exceptions = txt.split('\n')
-                              .map(l=>l.trim())
-                              .filter(l=>l && !l.startsWith('#'))
-                              .map(l=>l.toLowerCase());
+        // Remove duplicates and store
+        this._exceptions = [...new Set(exceptions)];
     }
 
     _isException(win) {
