@@ -7,10 +7,14 @@
 // ── GLOBAL IMPORTS ────────────────────────────────────────
 import { Extension } from "resource:///org/gnome/shell/extensions/js/extensions/extension.js";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
+import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
+import * as QuickSettings from "resource:///org/gnome/shell/ui/quickSettings.js";
+import {gettext as _} from "resource:///org/gnome/shell/extensions/js/extensions/extension.js";
 import Meta from "gi://Meta";
 import Shell from "gi://Shell";
 import Gio from "gi://Gio";
 import GLib from "gi://GLib";
+import GObject from "gi://GObject";
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA          = 'org.gnome.desktop.wm.keybindings';
@@ -238,6 +242,82 @@ class InteractionHandler {
     }
 }
 
+// ── INDICATOR ─────────────────────────────────────────────────
+class SimpleTilingIndicator extends PanelMenu.Button {
+    constructor(extension, tiler) {
+        super(0.5, 'Simple Tiling Indicator', false);
+        
+        this._extension = extension;
+        this._tiler = tiler;
+        this._settings = extension.getSettings();
+        
+        // Create the icon
+        this._icon = new St.Icon({
+            gicon: Gio.icon_new_for_string(this._extension.path + '/icons/tiling-symbolic.svg'),
+            style_class: 'system-status-icon'
+        });
+        this.add_child(this._icon);
+        
+        // Build the menu
+        this._buildMenu();
+        
+        // Connect to settings changes
+        this._settingsChangedId = this._settings.connect('changed::tiling-enabled', () => {
+            this._updateIcon();
+        });
+        
+        // Bind indicator visibility to settings
+        this._settings.bind('show-indicator', this, 'visible', Gio.SettingsBindFlags.GET);
+        
+        // Add to panel
+        Main.panel.addToStatusArea('simple-tiling-indicator', this, 1, 'right');
+        
+        // Update initial icon state
+        this._updateIcon();
+    }
+    
+    _buildMenu() {
+        // Toggle switch for enabling/disabling tiling
+        this._toggleItem = new PopupMenu.PopupSwitchMenuItem(
+            'Enable Tiling',
+            this._settings.get_boolean('tiling-enabled')
+        );
+        this._toggleItem.connect('toggled', (item, state) => {
+            this._settings.set_boolean('tiling-enabled', state);
+        });
+        this.menu.addMenuItem(this._toggleItem);
+        
+        // Separator
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        
+        // Settings menu item
+        const settingsItem = new PopupMenu.PopupMenuItem('Settings');
+        settingsItem.connect('activate', () => {
+            this._extension.openPreferences();
+            this.menu.close();
+        });
+        this.menu.addMenuItem(settingsItem);
+        
+        // Connect to tiling-enabled changes to update toggle
+        this._settings.connect('changed::tiling-enabled', () => {
+            this._toggleItem.setToggleState(this._settings.get_boolean('tiling-enabled'));
+        });
+    }
+    
+    _updateIcon() {
+        const enabled = this._settings.get_boolean('tiling-enabled');
+        this._icon.set_opacity(enabled ? 255 : 128); // Dim when disabled
+    }
+    
+    destroy() {
+        if (this._settingsChangedId) {
+            this._settings.disconnect(this._settingsChangedId);
+            this._settingsChangedId = null;
+        }
+        super.destroy();
+    }
+}
+
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
     constructor(extension) {
@@ -305,7 +385,11 @@ class Tiler {
         this._outerGapVertical  = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal= this.settings.get_int('outer-gap-horizontal');
         this._loadExceptions(); // Reload exceptions when settings change
-        this.queueTile();
+        
+        // If tiling was just re-enabled, tile all current windows
+        if (this.settings.get_boolean('tiling-enabled')) {
+            this.queueTile();
+        }
     }
 
     _loadExceptions() {
@@ -396,11 +480,18 @@ class Tiler {
 
     _onWindowAdded(workspace, win) {
         if (this.windows.includes(win)) return;
+        
+        // Check if tiling is enabled
+        if (!this.settings.get_boolean('tiling-enabled')) {
+            return;
+        }
+        
         if (this._isException(win)) {
             this._centerWindow(win);
             return;
         }
         if (this._isTileable(win)) {
+            // Always track tileable windows, even when tiling is disabled
             if (this.settings.get_string("new-window-behavior") === "master") {
                 this.windows.unshift(win);
             } else {
@@ -425,7 +516,10 @@ class Tiler {
                     this._onWindowMinimizedStateChanged()
                 ),
             });
-            this.queueTile();
+            // Only queue tiling if tiling is enabled
+            if (this.settings.get_boolean('tiling-enabled')) {
+                this.queueTile();
+            }
         }
     }
 
@@ -485,6 +579,7 @@ class Tiler {
     }
 
     queueTile() {
+        if (!this.settings.get_boolean('tiling-enabled')) return;
         if (this._tileInProgress || this._tileTimeoutId) return;
         this._tileInProgress = true;
         this._tileTimeoutId = GLib.timeout_add(
@@ -500,6 +595,7 @@ class Tiler {
     }
 
     tileNow() {
+        if (!this.settings.get_boolean('tiling-enabled')) return;
         if (!this._tileInProgress) {
             this._tileWindows();
         }
@@ -601,14 +697,74 @@ class Tiler {
     }
 }
 
+// ── TILING TOGGLE QUICK SETTING ───────────────────────────
+const TilingToggle = GObject.registerClass(
+class TilingToggle extends QuickSettings.QuickMenuToggle {
+    _init(extensionObject) {
+        super._init({
+            title: _('Tiling'),
+            subtitle: _('Automatic window tiling'),
+            iconName: 'view-grid-symbolic',
+            toggleMode: true,
+        });
+
+        this._extensionObject = extensionObject;
+
+        // Bind the toggle to our tiling-enabled setting
+        this._settings = extensionObject.getSettings();
+        this._settings.bind('tiling-enabled',
+            this, 'checked',
+            Gio.SettingsBindFlags.DEFAULT);
+
+        // Add a header to the menu
+        this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
+
+        // Add settings menu item
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        const settingsItem = this.menu.addAction(_('Settings'),
+            () => this._extensionObject.openPreferences());
+
+        // Ensure settings are unavailable when screen is locked
+        settingsItem.visible = Main.sessionMode.allowSettings;
+        this.menu._settingsActions[extensionObject.uuid] = settingsItem;
+    }
+});
+
+// ── SYSTEM INDICATOR ────────────────────────────────────────
+const SimpleTilingIndicator = GObject.registerClass(
+class SimpleTilingIndicator extends QuickSettings.SystemIndicator {
+    _init(extensionObject) {
+        super._init();
+
+        // Create the tiling toggle
+        this._tilingToggle = new TilingToggle(extensionObject);
+        
+        // Add the toggle to our items
+        this.quickSettingsItems.push(this._tilingToggle);
+    }
+
+    destroy() {
+        this.quickSettingsItems.forEach(item => item.destroy());
+        super.destroy();
+    }
+});
+
 // ── EXTENSION‑WRAPPER ───────────────────────────────────
 export default class InterimExtension extends Extension {
     enable() {
         this.tiler = new Tiler(this);
         this.tiler.enable();
+        
+        // Create and add Quick Settings indicator
+        this._indicator = new SimpleTilingIndicator(this);
+        Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
     }
 
     disable() {
+        if (this._indicator) {
+            this._indicator.destroy();
+            this._indicator = null;
+        }
         if (this.tiler) {
             this.tiler.disable();
             this.tiler = null;

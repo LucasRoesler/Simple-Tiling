@@ -6,12 +6,16 @@
 
 // ── GLOBAL IMPORTS ────────────────────────────────────────
 import { Extension }  from 'resource:///org/gnome/shell/extensions/extension.js';
-import * as Main       from 'resource:///org/gnome/shell/ui/main.js';
-import Meta            from 'gi://Meta';
-import Shell           from 'gi://Shell';
-import Gio             from 'gi://Gio';
-import GLib            from 'gi://GLib';
-import Clutter         from 'gi://Clutter';
+import * as Main         from 'resource:///org/gnome/shell/ui/main.js';
+import * as PopupMenu    from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
+import {gettext as _}    from 'resource:///org/gnome/shell/extensions/extension.js';
+import Meta              from 'gi://Meta';
+import Shell             from 'gi://Shell';
+import Gio               from 'gi://Gio';
+import GLib              from 'gi://GLib';
+import Clutter           from 'gi://Clutter';
+import GObject           from 'gi://GObject';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA          = 'org.gnome.desktop.wm.keybindings';
@@ -239,6 +243,63 @@ class InteractionHandler {
     }
 }
 
+// ── TILING TOGGLE QUICK SETTING ───────────────────────────
+const TilingToggle = GObject.registerClass(
+class TilingToggle extends QuickSettings.QuickMenuToggle {
+    _init(extensionObject) {
+        super._init({
+            title: _('Tiling'),
+            subtitle: _('Automatic window tiling'),
+            iconName: 'view-grid-symbolic',
+            toggleMode: true,
+        });
+
+        this._extensionObject = extensionObject;
+
+        // Bind the toggle to our tiling-enabled setting
+        this._settings = extensionObject.getSettings();
+        this._settings.bind('tiling-enabled',
+            this, 'checked',
+            Gio.SettingsBindFlags.DEFAULT);
+
+        // Add a header to the menu
+        this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
+
+        // Add settings menu item
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        const settingsItem = this.menu.addAction(_('Settings'),
+            () => this._extensionObject.openPreferences());
+
+        // Ensure settings are unavailable when screen is locked
+        settingsItem.visible = Main.sessionMode.allowSettings;
+        this.menu._settingsActions[extensionObject.uuid] = settingsItem;
+    }
+});
+
+// ── SYSTEM INDICATOR ────────────────────────────────────────
+const SimpleTilingIndicator = GObject.registerClass(
+class SimpleTilingIndicator extends QuickSettings.SystemIndicator {
+    _init(extensionObject) {
+        super._init();
+
+        // Optional: Create an indicator icon (uncomment if desired)
+        // this._indicator = this._addIndicator();
+        // this._indicator.icon_name = 'view-grid-symbolic';
+        // this._indicator.visible = false; // Only show when needed
+
+        // Create the tiling toggle
+        this._tilingToggle = new TilingToggle(extensionObject);
+        
+        // Add the toggle to our items
+        this.quickSettingsItems.push(this._tilingToggle);
+    }
+
+    destroy() {
+        this.quickSettingsItems.forEach(item => item.destroy());
+        super.destroy();
+    }
+});
+
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
     constructor(extension) {
@@ -306,7 +367,11 @@ class Tiler {
         this._outerGapVertical  = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal= this.settings.get_int('outer-gap-horizontal');
         this._loadExceptions(); // Reload exceptions when settings change
-        this.queueTile();
+        
+        // If tiling was just re-enabled, tile all current windows
+        if (this.settings.get_boolean('tiling-enabled')) {
+            this.queueTile();
+        }
     }
 
     _loadExceptions() {
@@ -397,11 +462,18 @@ class Tiler {
 
     _onWindowAdded(workspace, win) {
         if (this.windows.includes(win)) return;
+        
+        // Check if tiling is enabled
+        if (!this.settings.get_boolean('tiling-enabled')) {
+            return;
+        }
+        
         if (this._isException(win)) {
             this._centerWindow(win);
             return;
         }
         if (this._isTileable(win)) {
+            // Always track tileable windows, even when tiling is disabled
             if (this.settings.get_string("new-window-behavior") === "master") {
                 this.windows.unshift(win);
             } else {
@@ -426,7 +498,10 @@ class Tiler {
                     this._onWindowMinimizedStateChanged()
                 ),
             });
-            this.queueTile();
+            // Only queue tiling if tiling is enabled
+            if (this.settings.get_boolean('tiling-enabled')) {
+                this.queueTile();
+            }
         }
     }
 
@@ -487,6 +562,7 @@ class Tiler {
 
     queueTile() {
         if (this._tileInProgress || this._tileTimeoutId) return;
+        if (!this.settings.get_boolean('tiling-enabled')) return;
         this._tileInProgress = true;
         this._tileTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
@@ -501,9 +577,11 @@ class Tiler {
     }
 
     tileNow() {
+        if (!this.settings.get_boolean('tiling-enabled')) return;
         if (!this._tileInProgress) {
             this._tileWindows();
         }
+    }
     }
 
     _splitLayout(windows, area) {
@@ -600,10 +678,27 @@ class Tiler {
         };
         this._splitLayout(windowsToTile.slice(1), stackArea);
     }
-}
 
 // ── EXTENSION‑WRAPPER ───────────────────────────────────
 export default class ModernExtension extends Extension {
-    enable()  { this.tiler = new Tiler(this); this.tiler.enable(); }
-    disable() { this.tiler?.disable(); this.tiler = null; }
+    enable() { 
+        this.tiler = new Tiler(this); 
+        this.tiler.enable();
+        
+        // Create and add Quick Settings indicator
+        this._indicator = new SimpleTilingIndicator(this);
+        Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
+    }
+    
+    disable() { 
+        if (this._indicator) {
+            this._indicator.destroy();
+            this._indicator = null;
+        }
+        
+        if (this.tiler) {
+            this.tiler.disable(); 
+            this.tiler = null; 
+        }
+    }
 }

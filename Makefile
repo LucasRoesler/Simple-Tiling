@@ -15,9 +15,9 @@ UUID     := simple-tiling@domoel
 VERSION  := 7.2
 EXTDIR   := $(HOME)/.local/share/gnome-shell/extensions
 
-COMMON_FILES   := prefs.js schemas exceptions.txt locale *.css README.md LICENSE
+COMMON_FILES   := prefs.js schemas exceptions.txt icons locale *.css README.md LICENSE
 LEGACY_PREFS   := prefs_legacy.js
-INTERIM_PREFS  := prefs_interim.js
+INTERIM_PREFS  := prefs.interim.js
 MODERN_PREFS   := prefs_modern.js
 
 ###############################################################################

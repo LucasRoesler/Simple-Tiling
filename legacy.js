@@ -6,10 +6,13 @@
 'use strict';
 
 const Main = imports.ui.main;
+const PanelMenu = imports.ui.panelMenu;
+const PopupMenu = imports.ui.popupMenu;
 const Meta = imports.gi.Meta;
 const Shell = imports.gi.Shell;
 const Gio = imports.gi.Gio;
 const GLib = imports.gi.GLib;
+const St = imports.gi.St;
 const ExtensionUtils = imports.misc.extensionUtils;
 const ByteArray = imports.byteArray;
 
@@ -297,6 +300,81 @@ class InteractionHandler {
     }
 }
 
+// --- INDICATOR ---
+class SimpleTilingIndicator extends PanelMenu.Button {
+    constructor(tiler) {
+        super(0.5, 'Simple Tiling Indicator', false);
+        
+        this._tiler = tiler;
+        this._settings = ExtensionUtils.getSettings(SCHEMA_NAME);
+        
+        // Create the icon
+        this._icon = new St.Icon({
+            gicon: Gio.icon_new_for_string(Me.path + '/icons/tiling-symbolic.svg'),
+            style_class: 'system-status-icon'
+        });
+        this.add_child(this._icon);
+        
+        // Build the menu
+        this._buildMenu();
+        
+        // Connect to settings changes
+        this._settingsChangedId = this._settings.connect('changed::tiling-enabled', () => {
+            this._updateIcon();
+        });
+        
+        // Bind indicator visibility to settings
+        this._settings.bind('show-indicator', this, 'visible', Gio.SettingsBindFlags.GET);
+        
+        // Add to panel
+        Main.panel.addToStatusArea('simple-tiling-indicator', this, 1, 'right');
+        
+        // Update initial icon state
+        this._updateIcon();
+    }
+    
+    _buildMenu() {
+        // Toggle switch for enabling/disabling tiling
+        this._toggleItem = new PopupMenu.PopupSwitchMenuItem(
+            'Enable Tiling',
+            this._settings.get_boolean('tiling-enabled')
+        );
+        this._toggleItem.connect('toggled', (item, state) => {
+            this._settings.set_boolean('tiling-enabled', state);
+        });
+        this.menu.addMenuItem(this._toggleItem);
+        
+        // Separator
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        
+        // Settings menu item
+        const settingsItem = new PopupMenu.PopupMenuItem('Settings');
+        settingsItem.connect('activate', () => {
+            ExtensionUtils.openPrefs();
+            this.menu.close();
+        });
+        this.menu.addMenuItem(settingsItem);
+        
+        // Connect to tiling-enabled changes to update toggle
+        this._settings.connect('changed::tiling-enabled', () => {
+            this._toggleItem.setToggleState(this._settings.get_boolean('tiling-enabled'));
+        });
+    }
+    
+    _updateIcon() {
+        const enabled = this._settings.get_boolean('tiling-enabled');
+        this._icon.set_opacity(enabled ? 255 : 128); // Dim when disabled
+    }
+    
+    destroy() {
+        if (this._settingsChangedId) {
+            this._settings.disconnect(this._settingsChangedId);
+            this._settingsChangedId = null;
+        }
+        super.destroy();
+    }
+}
+
 // --- TILER ---
 class Tiler {
     constructor() {
@@ -372,7 +450,11 @@ class Tiler {
         this._outerGapVertical = this._settings.get_int("outer-gap-vertical");
         this._outerGapHorizontal = this._settings.get_int("outer-gap-horizontal");
         this._loadExceptions(); // Reload exceptions when settings change
-        this.queueTile();
+        
+        // If tiling was just re-enabled, tile all current windows
+        if (this._settings.get_boolean('tiling-enabled')) {
+            this.queueTile();
+        }
     }
 
     _loadExceptions() {
@@ -458,13 +540,18 @@ class Tiler {
 
     _onWindowAdded(workspace, win) {
         if (this.windows.includes(win)) return;
-
+        
+        // Check if tiling is enabled
+        if (!this._settings.get_boolean('tiling-enabled')) {
+            return;
+        }
+        
         if (this._isException(win)) {
             this._centerWindow(win);
             return;
         }
-
         if (this._isTileable(win)) {
+            // Always track tileable windows, even when tiling is disabled
             if (this._settings.get_string("new-window-behavior") === "master") {
                 this.windows.unshift(win);
             } else {
@@ -492,7 +579,10 @@ class Tiler {
                 ),
             });
 
-            this.queueTile();
+            // Only queue tiling if tiling is enabled
+            if (this._settings.get_boolean('tiling-enabled')) {
+                this.queueTile();
+            }
         }
     }
 
@@ -551,6 +641,7 @@ class Tiler {
     }
 
     queueTile() {
+        if (!this._settings.get_boolean('tiling-enabled')) return;
         if (this._tileInProgress || this._tileTimeoutId) return;
         this._tileInProgress = true;
         
@@ -563,6 +654,7 @@ class Tiler {
     }
 
     tileNow() {
+        if (!this._settings.get_boolean('tiling-enabled')) return;
         if (!this._tileInProgress) {
             this._tileWindows();
         }
@@ -673,12 +765,18 @@ class Tiler {
 var LegacyExtension = class {
     constructor(metadata) {
         this.tiler = null;
+        this.indicator = null;
     }
     enable() {
         this.tiler = new Tiler();
         this.tiler.enable();
+        this.indicator = new SimpleTilingIndicator(this.tiler);
     }
     disable() {
+        if (this.indicator) {
+            this.indicator.destroy();
+            this.indicator = null;
+        }
         if (this.tiler) {
             this.tiler.disable();
             this.tiler = null;

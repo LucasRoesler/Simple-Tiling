@@ -51,6 +51,20 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         const groupBehavior = new Adw.PreferencesGroup({ title: 'Window Behavior' });
         page.add(groupBehavior);
 
+        const rowTilingEnabled = new Adw.ActionRow({
+            title: 'Enable Tiling',
+            subtitle: 'Toggle automatic tiling of windows on/off'
+        });
+        
+        const tilingSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('tiling-enabled', tilingSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        
+        rowTilingEnabled.add_suffix(tilingSwitch);
+        rowTilingEnabled.set_activatable_widget(tilingSwitch);
+        groupBehavior.add(rowTilingEnabled);
+
         const rowNewWindow = new Adw.ComboRow({
             title: 'Open new windows as',
             subtitle: 'Whether a new window starts as Master or Stack',

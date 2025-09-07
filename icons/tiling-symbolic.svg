@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke="currentColor" stroke-width="1.5">
+    <!-- Main tiling grid representing the master-stack layout -->
+    <!-- Master window (left side) -->
+    <rect x="1" y="1" width="6" height="14" rx="0.5"/>
+    <!-- Stack windows (right side) -->
+    <rect x="9" y="1" width="6" height="6.5" rx="0.5"/>
+    <rect x="9" y="8.5" width="6" height="6.5" rx="0.5"/>
+  </g>
+</svg>

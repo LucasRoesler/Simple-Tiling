@@ -64,6 +64,12 @@
       <summary>Window exceptions list</summary>
       <description>List of application identifiers (WM_CLASS or App ID) that should be ignored by the tiling manager and kept floating.</description>
     </key>
+
+    <key name="tiling-enabled" type="b">
+      <default>true</default>
+      <summary>Enable automatic tiling</summary>
+      <description>When disabled, stops automatic tiling of new windows while preserving existing layout.</description>
+    </key>
     
   </schema>
 </schemalist>
