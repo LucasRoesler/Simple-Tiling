@@ -6,7 +6,7 @@
   "shell-version": [
     "3.38"
   ],
-  "settings-schema": "org.gnome.shell.extensions.simple-tiling.domoel",
+  "settings-schema": "org.gnome.shell.extensions.simple-tiling.lucasroesler",
   "preferences_ui": "prefs.js",
   "url": "https://github.com/Domoel/Simple-Tiling",
   "gettext-domain": "__UUID__"

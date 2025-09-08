@@ -65,6 +65,20 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         rowTilingEnabled.set_activatable_widget(tilingSwitch);
         groupBehavior.add(rowTilingEnabled);
 
+        const rowRespectMaximized = new Adw.ActionRow({
+            title: 'Respect Maximized Windows',
+            subtitle: 'Skip tiling when windows are maximized, otherwise force all windows to tile'
+        });
+        
+        const respectMaximizedSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('respect-maximized-windows', respectMaximizedSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+        
+        rowRespectMaximized.add_suffix(respectMaximizedSwitch);
+        rowRespectMaximized.set_activatable_widget(respectMaximizedSwitch);
+        groupBehavior.add(rowRespectMaximized);
+
         const rowNewWindow = new Adw.ComboRow({
             title: 'Open new windows as',
             subtitle: 'Whether a new window starts as Master or Stack',

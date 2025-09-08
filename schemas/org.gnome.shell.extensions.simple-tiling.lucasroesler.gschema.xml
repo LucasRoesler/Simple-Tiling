@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="org.gnome.shell.extensions.simple-tiling.domoel" path="/org/gnome/shell/extensions/simple-tiling/domoel/">
+  <schema id="org.gnome.shell.extensions.simple-tiling.lucasroesler" path="/org/gnome/shell/extensions/simple-tiling/lucasroesler/">
     
     <key name="swap-master-window" type="as">
       <default><![CDATA[['<Super>Return']]]></default>
@@ -69,6 +69,12 @@
       <default>true</default>
       <summary>Enable automatic tiling</summary>
       <description>When disabled, stops automatic tiling of new windows while preserving existing layout.</description>
+    </key>
+
+    <key name="respect-maximized-windows" type="b">
+      <default>true</default>
+      <summary>Respect maximized windows</summary>
+      <description>When enabled, skip tiling operations while any window is maximized. When disabled, force all windows to tile (current behavior).</description>
     </key>
     
   </schema>

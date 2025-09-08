@@ -10,7 +10,7 @@
 const { Gtk, GObject, Gio } = imports.gi;
 const ExtensionUtils = imports.misc.extensionUtils;
 
-const SCHEMA_NAME = "org.gnome.shell.extensions.simple-tiling.domoel";
+const SCHEMA_NAME = "org.gnome.shell.extensions.simple-tiling.lucasroesler";
 
 // ── DEFINITIONS ────────────────────────────────────────────
 const COLUMN_ID = 0;

@@ -424,6 +424,12 @@ class Tiler {
         return this._exceptions.includes(wmClass) || this._exceptions.includes(appId);
     }
 
+    _hasMaximizedWindows() {
+        return this.windows.some(win => 
+            win.get_maximized() && !win.minimized
+        );
+    }
+
     _isTileable(win) {
         return (
             win &&
@@ -442,8 +448,12 @@ class Tiler {
                 if (index > -1) this._centerTimeoutIds.splice(index, 1);
 
                 if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
-                if (win.get_maximized())
+                
+                // Conditional unmaximize for exception windows based on setting
+                if (!this.settings.get_boolean('respect-maximized-windows') && 
+                    win.get_maximized()) {
                     win.unmaximize(Meta.MaximizeFlags.BOTH);
+                }
 
                 const monitorIndex = win.get_monitor();
                 const workspace = this._workspaceManager.get_active_workspace();
@@ -451,13 +461,16 @@ class Tiler {
                     monitorIndex
                 );
 
-                const frame = win.get_frame_rect();
-                win.move_frame(
-                    true,
-                    workArea.x + Math.floor((workArea.width - frame.width) / 2),
-                    workArea.y +
-                        Math.floor((workArea.height - frame.height) / 2)
-                );
+                // Only center if not maximized (or if we just unmaximized it)
+                if (!win.get_maximized()) {
+                    const frame = win.get_frame_rect();
+                    win.move_frame(
+                        true,
+                        workArea.x + Math.floor((workArea.width - frame.width) / 2),
+                        workArea.y +
+                            Math.floor((workArea.height - frame.height) / 2)
+                    );
+                }
 
                 GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
                     if (win.get_display()) {
@@ -581,6 +594,13 @@ class Tiler {
     queueTile() {
         if (!this.settings.get_boolean('tiling-enabled')) return;
         if (this._tileInProgress || this._tileTimeoutId) return;
+        
+        // Check if we should respect maximized windows
+        if (this.settings.get_boolean('respect-maximized-windows') && 
+            this._hasMaximizedWindows()) {
+            return; // Skip tiling when maximized windows exist
+        }
+        
         this._tileInProgress = true;
         this._tileTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
@@ -664,9 +684,15 @@ class Tiler {
             width: workArea.width - 2 * this._outerGapHorizontal,
             height: workArea.height - 2 * this._outerGapVertical,
         };
-        windowsToTile.forEach((win) => {
-            if (win.get_maximized()) win.unmaximize(Meta.MaximizeFlags.BOTH);
-        });
+        
+        // Conditional unmaximize behavior based on setting
+        if (!this.settings.get_boolean('respect-maximized-windows')) {
+            // Current behavior: force unmaximize all windows
+            windowsToTile.forEach((win) => {
+                if (win.get_maximized()) win.unmaximize(Meta.MaximizeFlags.BOTH);
+            });
+        }
+        // If respecting maximized windows, don't force unmaximize
         if (windowsToTile.length === 1) {
             windowsToTile[0].move_resize_frame(
                 true,

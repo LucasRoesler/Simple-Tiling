@@ -11,7 +11,7 @@
 #  make clean            → Bereinigt das Ausgangsverzeichnis
 ###############################################################################
 
-UUID     := simple-tiling@domoel
+UUID     := simple-tiling@lucasroesler
 VERSION  := 7.2
 EXTDIR   := $(HOME)/.local/share/gnome-shell/extensions
 
