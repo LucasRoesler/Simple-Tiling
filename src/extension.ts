@@ -25,7 +25,7 @@ const WM_SCHEMA          = 'org.gnome.desktop.wm.keybindings';
 const TILING_DELAY_MS    = 20;   // Change Tiling Window Delay
 const CENTERING_DELAY_MS = 5;    // Change Centered Window Delay
 
-const KEYBINDINGS = {
+const KEYBINDINGS: { [key: string]: (self: any) => void } = {
     'swap-master-window': (self) => self._swapWithMaster(),
     'swap-left-window':   (self) => self._swapInDirection('left'),
     'swap-right-window':  (self) => self._swapInDirection('right'),
@@ -54,17 +54,18 @@ function getPointerXY(): [number, number] {
     const device = Clutter.get_default_backend()
                           .get_default_seat()
                           .get_pointer();
-    return device ? device.get_position() : [0, 0];
+    if (device) {
+        try {
+            return (device as any).get_position();
+        } catch {}
+    }
+    return [0, 0];
 }
 
 // ── TYPE DEFINITIONS ────────────────────────────────────────
 interface SignalConnection {
     object: any;
     id: number;
-}
-
-interface KeyBinding {
-    [key: string]: (self: InteractionHandler) => void;
 }
 
 // ── INTERACTIONHANDLER ───────────────────────────────────
@@ -101,7 +102,7 @@ class InteractionHandler {
 
         this._grabOpIds.push(
             global.display.connect('grab-op-begin',
-                (_, __, win) => { if (this.tiler.windows.includes(win))
+                (_: any, __: any, win: Meta.Window) => { if (this.tiler.windows.includes(win))
                                       this.tiler.grabbedWindow = win; })
         );
         this._grabOpIds.push(
@@ -147,18 +148,14 @@ class InteractionHandler {
 
         const keys = [];
 
-        const add = key => { if (schema.has_key(key)) keys.push(key); };
+        const add = (key: string) => { if (schema.has_key(key)) keys.push(key); };
 
+        // Only disable tiling shortcuts since they conflict with our swap shortcuts
+        // Maximize shortcuts are now compatible with our respect-maximized-windows feature
         if (schema.has_key('toggle-tiled-left'))
             keys.push('toggle-tiled-left', 'toggle-tiled-right');
         else {
             add('tile-left');  add('tile-right');
-        }
-
-        if (schema.has_key('toggle-maximized'))
-            keys.push('toggle-maximized');
-        else {
-            add('maximize');   add('unmaximize');
         }
 
         if (keys.length) {
@@ -265,9 +262,9 @@ class InteractionHandler {
 
 // ── TILING TOGGLE QUICK SETTING ───────────────────────────
 const TilingToggle = GObject.registerClass(
-class TilingToggle extends QuickSettings.QuickMenuToggle {
-    private _extensionObject: Extension;
-    private _settings: Gio.Settings;
+class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
+    private _extensionObject!: Extension;
+    private _settings!: Gio.Settings;
 
     _init(extensionObject: Extension) {
         super._init({
@@ -282,7 +279,7 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
         // Bind the toggle to our tiling-enabled setting
         this._settings = extensionObject.getSettings();
         this._settings.bind('tiling-enabled',
-            this, 'checked',
+            this as any, 'checked',
             Gio.SettingsBindFlags.DEFAULT);
 
         // Add a header to the menu
@@ -301,9 +298,9 @@ class TilingToggle extends QuickSettings.QuickMenuToggle {
 
 // ── SYSTEM INDICATOR ────────────────────────────────────────
 const SimpleTilingIndicator = GObject.registerClass(
-class SimpleTilingIndicator extends QuickSettings.SystemIndicator {
+class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
     private _tilingToggle?: any;
-    public quickSettingsItems: any[];
+    public declare quickSettingsItems: any[];
 
     _init(extensionObject: Extension) {
         super._init();
@@ -418,7 +415,7 @@ class Tiler {
     }
 
     _loadExceptions(): void {
-        let exceptions = [];
+        let exceptions: string[] = [];
 
         // Load exceptions from settings
         const settingsExceptions = this.settings.get_strv('window-exceptions');
@@ -499,10 +496,10 @@ class Tiler {
 
                 GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
                     if (win.get_display()) {
-                        if (typeof win.set_keep_above === "function")
-                            win.set_keep_above(true);
-                        else if (typeof win.make_above === "function")
-                            win.make_above();
+                        if (typeof (win as any).set_keep_above === "function")
+                            (win as any).set_keep_above(true);
+                        else if (typeof (win as any).make_above === "function")
+                            (win as any).make_above();
                     }
                     return GLib.SOURCE_REMOVE;
                 });
@@ -516,7 +513,7 @@ class Tiler {
         this.queueTile();
     }
 
-    _onWindowAdded(workspace: any, win: Meta.Window): void {
+    _onWindowAdded(_workspace: any, win: Meta.Window): void {
         if (this.windows.includes(win)) return;
         
         if (this._isException(win)) {
@@ -559,18 +556,20 @@ class Tiler {
         }
     }
 
-    _onWindowRemoved(workspace: any, win: Meta.Window): void {
+    _onWindowRemoved(_workspace: any, win: Meta.Window): void {
         const index = this.windows.indexOf(win);
         if (index > -1) this.windows.splice(index, 1);
 
         ["unmanaged", "size-changed", "minimized"].forEach((prefix) => {
             const key = `${prefix}-${win.get_id()}`;
             if (this._signalIds.has(key)) {
-                const { object, id } = this._signalIds.get(key);
-                try {
-                    object.disconnect(id);
-                } catch (e) {}
-                this._signalIds.delete(key);
+                const sig = this._signalIds.get(key);
+                if (sig) {
+                    try {
+                        sig.object.disconnect(sig.id);
+                    } catch (e) {}
+                    this._signalIds.delete(key);
+                }
             }
         });
         this.queueTile();
@@ -585,16 +584,16 @@ class Tiler {
         const workspace = this._workspaceManager.get_active_workspace();
         workspace
             .list_windows()
-            .forEach((win) => this._onWindowAdded(workspace, win));
+            .forEach((win: Meta.Window) => this._onWindowAdded(workspace, win));
         this._signalIds.set("window-added", {
             object: workspace,
-            id: workspace.connect("window-added", (ws, win) =>
+            id: workspace.connect("window-added", (ws: any, win: Meta.Window) =>
                 this._onWindowAdded(ws, win)
             ),
         });
         this._signalIds.set("window-removed", {
             object: workspace,
-            id: workspace.connect("window-removed", (ws, win) =>
+            id: workspace.connect("window-removed", (ws: any, win: Meta.Window) =>
                 this._onWindowRemoved(ws, win)
             ),
         });
@@ -604,10 +603,10 @@ class Tiler {
     _disconnectFromWorkspace(): void {
         this.windows.slice().forEach((win) => this._onWindowRemoved(null, win));
         ["window-added", "window-removed"].forEach((key) => {
-            if (this._signalIds.has(key)) {
-                const { object, id } = this._signalIds.get(key);
+            const sig = this._signalIds.get(key);
+            if (sig) {
                 try {
-                    object.disconnect(id);
+                    sig.object.disconnect(sig.id);
                 } catch (e) {}
                 this._signalIds.delete(key);
             }

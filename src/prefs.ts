@@ -10,7 +10,7 @@ import Gtk from 'gi://Gtk';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 export default class SimpleTilingPrefs extends ExtensionPreferences {
-    fillPreferencesWindow(window: Adw.PreferencesWindow): void {
+    async fillPreferencesWindow(window: Adw.PreferencesWindow): Promise<void> {
         const settings = this.getSettings();
         const page = new Adw.PreferencesPage();
         window.add(page);
@@ -161,7 +161,7 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         parent.add(fileInfoRow);
     }
 
-    _addExceptionRow(parent, settings, exception) {
+    _addExceptionRow(parent: Adw.PreferencesGroup, settings: Gio.Settings, exception: string): void {
         const row = new Adw.ActionRow({
             title: exception,
             subtitle: 'Application identifier (WM_CLASS or App ID)'
@@ -179,7 +179,10 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             if (index > -1) {
                 exceptions.splice(index, 1);
                 settings.set_strv('window-exceptions', exceptions);
-                row.get_parent().remove(row);
+                const parent = row.get_parent();
+                if (parent && 'remove' in parent) {
+                    (parent as any).remove(row);
+                }
             }
         });
 
@@ -187,7 +190,7 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         parent.add(row);
     }
 
-    _showAddExceptionDialog(settings, parentGroup) {
+    _showAddExceptionDialog(settings: Gio.Settings, parentGroup: Adw.PreferencesGroup): void {
         const dialog = new Adw.MessageDialog({
             heading: 'Add Window Exception',
             body: 'Enter the application identifier (WM_CLASS or App ID) to exclude from tiling:'
