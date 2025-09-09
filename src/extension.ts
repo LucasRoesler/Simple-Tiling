@@ -1,20 +1,23 @@
-///////////////////////////////////////////////////////////////
-//      Simple‑Tiling – MODERN (GNOME Shell 40 - 44)         //
-//               © 2025 domoel – MIT                         //
+/////////////////////////////////////////////////////////////
+//      Simple‑Tiling – MODERN (GNOME Shell 45+)          //
+//               © 2025 domoel – MIT                       //
 /////////////////////////////////////////////////////////////
 
 
 // ── GLOBAL IMPORTS ────────────────────────────────────────
-import { Extension } from "resource:///org/gnome/shell/extensions/js/extensions/extension.js";
-import * as Main from "resource:///org/gnome/shell/ui/main.js";
-import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
-import * as QuickSettings from "resource:///org/gnome/shell/ui/quickSettings.js";
-import {gettext as _} from "resource:///org/gnome/shell/extensions/js/extensions/extension.js";
-import Meta from "gi://Meta";
-import Shell from "gi://Shell";
-import Gio from "gi://Gio";
-import GLib from "gi://GLib";
-import GObject from "gi://GObject";
+import { Extension, gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
+
+import Meta from 'gi://Meta';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Clutter from 'gi://Clutter';
+import GObject from 'gi://GObject';
+
+// Import ambient types
+import './ambient.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA          = 'org.gnome.desktop.wm.keybindings';
@@ -35,7 +38,7 @@ const KEYBINDINGS = {
 };
 
 // ── HELPER‑FUNCTION ────────────────────────────────────────
-function getPointerXY() {
+function getPointerXY(): [number, number] {
     if (global.get_pointer) {
         const [x, y] = global.get_pointer();
         return [x, y];
@@ -54,9 +57,27 @@ function getPointerXY() {
     return device ? device.get_position() : [0, 0];
 }
 
+// ── TYPE DEFINITIONS ────────────────────────────────────────
+interface SignalConnection {
+    object: any;
+    id: number;
+}
+
+interface KeyBinding {
+    [key: string]: (self: InteractionHandler) => void;
+}
+
 // ── INTERACTIONHANDLER ───────────────────────────────────
 class InteractionHandler {
-    constructor(tiler) {
+    private tiler: Tiler;
+    private _settings: Gio.Settings;
+    private _wmSettings: Gio.Settings;
+    private _wmKeysToDisable: string[];
+    private _savedWmShortcuts: { [key: string]: GLib.Variant };
+    private _grabOpIds: number[];
+    private _settingsChangedId: number | null;
+
+    constructor(tiler: Tiler) {
         this.tiler              = tiler;
         this._settings          = this.tiler.settings;
         this._wmSettings        = new Gio.Settings({ schema: WM_SCHEMA });
@@ -67,7 +88,7 @@ class InteractionHandler {
         this._settingsChangedId = null;
     }
 
-    enable() {
+    enable(): void {
         this._prepareWmShortcuts();
 
         if (this._wmKeysToDisable.length)
@@ -88,7 +109,7 @@ class InteractionHandler {
         );
     }
 
-    disable() {
+    disable(): void {
         if (this._wmKeysToDisable.length)
             this._wmKeysToDisable.forEach(k =>
                 this._wmSettings.set_value(k, this._savedWmShortcuts[k]));
@@ -103,7 +124,7 @@ class InteractionHandler {
         this._grabOpIds = [];
     }
 
-    _bind(key, handler) {
+    _bind(key: string, handler: (self: InteractionHandler) => void): void {
         global.display.add_keybinding(
             key,
             this._settings,
@@ -112,15 +133,15 @@ class InteractionHandler {
         );
     }
 
-    _bindAllShortcuts()  { for (const [k,h] of Object.entries(KEYBINDINGS)) this._bind(k, h); }
-    _unbindAllShortcuts(){ for (const k in KEYBINDINGS) global.display.remove_keybinding(k); }
+    _bindAllShortcuts(): void  { for (const [k,h] of Object.entries(KEYBINDINGS)) this._bind(k, h); }
+    _unbindAllShortcuts(): void { for (const k in KEYBINDINGS) global.display.remove_keybinding(k); }
 
-    _onSettingsChanged() {
+    _onSettingsChanged(): void {
         this._unbindAllShortcuts();
         this._bindAllShortcuts();
     }
 
-    _prepareWmShortcuts() {
+    _prepareWmShortcuts(): void {
         const schema = this._wmSettings.settings_schema;
         if (!schema) return;
 
@@ -147,14 +168,14 @@ class InteractionHandler {
         }
     }
 
-    _focusInDirection(direction) {
+    _focusInDirection(direction: string): void {
         const src = global.display.get_focus_window();
         if (!src || !this.tiler.windows.includes(src)) return;
         const tgt = this._findTargetInDirection(src, direction);
         if (tgt) tgt.activate(global.get_current_time());
     }
 
-    _swapWithMaster() {
+    _swapWithMaster(): void {
         const w = this.tiler.windows;
         if (w.length < 2) return;
         const foc = global.display.get_focus_window();
@@ -166,7 +187,7 @@ class InteractionHandler {
         w[0]?.activate(global.get_current_time());
     }
 
-    _swapInDirection(direction) {
+    _swapInDirection(direction: string): void {
         const src = global.display.get_focus_window();
         if (!src || !this.tiler.windows.includes(src)) return;
         let tgt = null;
@@ -183,7 +204,7 @@ class InteractionHandler {
         src.activate(global.get_current_time());
     }
 
-    _findTargetInDirection(src, dir) {
+    _findTargetInDirection(src: Meta.Window, dir: string): Meta.Window | null {
         const sRect = src.get_frame_rect(), cand=[];
         for (const win of this.tiler.windows) {
             if (win===src) continue;
@@ -205,7 +226,7 @@ class InteractionHandler {
         return best;
     }
 
-    _onGrabEnd() {
+    _onGrabEnd(): void {
         const grabbed = this.tiler.grabbedWindow;
         if (!grabbed) return;
         const tgt = this._findTargetUnderPointer(grabbed);
@@ -219,7 +240,7 @@ class InteractionHandler {
         this.tiler.grabbedWindow = null;
     }
 
-    _findTargetUnderPointer(exclude) {
+    _findTargetUnderPointer(exclude: Meta.Window): Meta.Window | null {
         const [x,y] = getPointerXY();
         const wins = global.get_window_actors()
                            .map(a=>a.meta_window)
@@ -242,85 +263,89 @@ class InteractionHandler {
     }
 }
 
-// ── INDICATOR ─────────────────────────────────────────────────
-class SimpleTilingIndicator extends PanelMenu.Button {
-    constructor(extension, tiler) {
-        super(0.5, 'Simple Tiling Indicator', false);
-        
-        this._extension = extension;
-        this._tiler = tiler;
-        this._settings = extension.getSettings();
-        
-        // Create the icon
-        this._icon = new St.Icon({
-            gicon: Gio.icon_new_for_string(this._extension.path + '/icons/tiling-symbolic.svg'),
-            style_class: 'system-status-icon'
+// ── TILING TOGGLE QUICK SETTING ───────────────────────────
+const TilingToggle = GObject.registerClass(
+class TilingToggle extends QuickSettings.QuickMenuToggle {
+    private _extensionObject: Extension;
+    private _settings: Gio.Settings;
+
+    _init(extensionObject: Extension) {
+        super._init({
+            title: _('Tiling'),
+            subtitle: _('Automatic window tiling'),
+            iconName: 'view-grid-symbolic',
+            toggleMode: true,
         });
-        this.add_child(this._icon);
-        
-        // Build the menu
-        this._buildMenu();
-        
-        // Connect to settings changes
-        this._settingsChangedId = this._settings.connect('changed::tiling-enabled', () => {
-            this._updateIcon();
-        });
-        
-        // Bind indicator visibility to settings
-        this._settings.bind('show-indicator', this, 'visible', Gio.SettingsBindFlags.GET);
-        
-        // Add to panel
-        Main.panel.addToStatusArea('simple-tiling-indicator', this, 1, 'right');
-        
-        // Update initial icon state
-        this._updateIcon();
-    }
-    
-    _buildMenu() {
-        // Toggle switch for enabling/disabling tiling
-        this._toggleItem = new PopupMenu.PopupSwitchMenuItem(
-            'Enable Tiling',
-            this._settings.get_boolean('tiling-enabled')
-        );
-        this._toggleItem.connect('toggled', (item, state) => {
-            this._settings.set_boolean('tiling-enabled', state);
-        });
-        this.menu.addMenuItem(this._toggleItem);
-        
-        // Separator
+
+        this._extensionObject = extensionObject;
+
+        // Bind the toggle to our tiling-enabled setting
+        this._settings = extensionObject.getSettings();
+        this._settings.bind('tiling-enabled',
+            this, 'checked',
+            Gio.SettingsBindFlags.DEFAULT);
+
+        // Add a header to the menu
+        this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
+
+        // Add settings menu item
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        
-        // Settings menu item
-        const settingsItem = new PopupMenu.PopupMenuItem('Settings');
-        settingsItem.connect('activate', () => {
-            this._extension.openPreferences();
-            this.menu.close();
-        });
-        this.menu.addMenuItem(settingsItem);
-        
-        // Connect to tiling-enabled changes to update toggle
-        this._settings.connect('changed::tiling-enabled', () => {
-            this._toggleItem.setToggleState(this._settings.get_boolean('tiling-enabled'));
-        });
+        const settingsItem = this.menu.addAction(_('Settings'),
+            () => this._extensionObject.openPreferences());
+
+        // Ensure settings are unavailable when screen is locked
+        settingsItem.visible = Main.sessionMode.allowSettings;
+        this.menu._settingsActions[extensionObject.uuid] = settingsItem;
     }
-    
-    _updateIcon() {
-        const enabled = this._settings.get_boolean('tiling-enabled');
-        this._icon.set_opacity(enabled ? 255 : 128); // Dim when disabled
+});
+
+// ── SYSTEM INDICATOR ────────────────────────────────────────
+const SimpleTilingIndicator = GObject.registerClass(
+class SimpleTilingIndicator extends QuickSettings.SystemIndicator {
+    private _tilingToggle?: any;
+    public quickSettingsItems: any[];
+
+    _init(extensionObject: Extension) {
+        super._init();
+
+        // Optional: Create an indicator icon (uncomment if desired)
+        // this._indicator = this._addIndicator();
+        // this._indicator.icon_name = 'view-grid-symbolic';
+        // this._indicator.visible = false; // Only show when needed
+
+        // Create the tiling toggle
+        this._tilingToggle = new TilingToggle(extensionObject);
+        
+        // Add the toggle to our items
+        this.quickSettingsItems.push(this._tilingToggle);
     }
-    
+
     destroy() {
-        if (this._settingsChangedId) {
-            this._settings.disconnect(this._settingsChangedId);
-            this._settingsChangedId = null;
-        }
+        this.quickSettingsItems.forEach(item => item.destroy());
         super.destroy();
     }
-}
+});
 
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
-    constructor(extension) {
+    public windows: Meta.Window[];
+    public grabbedWindow: Meta.Window | null;
+    public settings: Gio.Settings;
+    
+    private _extension: Extension;
+    private _signalIds: Map<string, SignalConnection>;
+    private _tileInProgress: boolean;
+    private _innerGap: number;
+    private _outerGapVertical: number;
+    private _outerGapHorizontal: number;
+    private _tilingDelay: number;
+    private _centeringDelay: number;
+    private _exceptions: string[];
+    private _interactionHandler: InteractionHandler;
+    private _tileTimeoutId: number | null;
+    private _centerTimeoutIds: number[];
+    private _workspaceManager: any;
+    constructor(extension: Extension) {
         this._extension       = extension;
         this.settings         = this._extension.getSettings();
 
@@ -343,7 +368,7 @@ class Tiler {
         this._centerTimeoutIds= [];
     }
 
-    enable() {
+    enable(): void {
         this._loadExceptions();
         this._workspaceManager = global.workspace_manager;
 
@@ -362,7 +387,7 @@ class Tiler {
         });
     }
 
-    disable() {
+    disable(): void {
         if (this._tileTimeoutId) {
             GLib.source_remove(this._tileTimeoutId);
             this._tileTimeoutId = null;
@@ -380,7 +405,7 @@ class Tiler {
         this.windows = [];
     }
 
-    _onSettingsChanged() {
+    _onSettingsChanged(): void {
         this._innerGap          = this.settings.get_int('inner-gap');
         this._outerGapVertical  = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal= this.settings.get_int('outer-gap-horizontal');
@@ -392,7 +417,7 @@ class Tiler {
         }
     }
 
-    _loadExceptions() {
+    _loadExceptions(): void {
         let exceptions = [];
 
         // Load exceptions from settings
@@ -417,20 +442,20 @@ class Tiler {
         this._exceptions = [...new Set(exceptions)];
     }
 
-    _isException(win) {
+    _isException(win: Meta.Window): boolean {
         if (!win) return false;
         const wmClass = (win.get_wm_class() || "").toLowerCase();
         const appId = (win.get_gtk_application_id() || "").toLowerCase();
         return this._exceptions.includes(wmClass) || this._exceptions.includes(appId);
     }
 
-    _hasMaximizedWindows() {
+    _hasMaximizedWindows(): boolean {
         return this.windows.some(win => 
             win.get_maximized() && !win.minimized
         );
     }
 
-    _isTileable(win) {
+    _isTileable(win: Meta.Window): boolean {
         return (
             win &&
             !win.minimized &&
@@ -439,7 +464,7 @@ class Tiler {
         );
     }
 
-    _centerWindow(win) {
+    _centerWindow(win: Meta.Window): void {
         const timeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
             this._centeringDelay,
@@ -487,20 +512,18 @@ class Tiler {
         this._centerTimeoutIds.push(timeoutId);
     }
 
-    _onWindowMinimizedStateChanged() {
+    _onWindowMinimizedStateChanged(): void {
         this.queueTile();
     }
 
-    _onWindowAdded(workspace, win) {
+    _onWindowAdded(workspace: any, win: Meta.Window): void {
         if (this.windows.includes(win)) return;
         
-        // Check if tiling is enabled
-        if (!this.settings.get_boolean('tiling-enabled')) {
-            return;
-        }
-        
         if (this._isException(win)) {
-            this._centerWindow(win);
+            // Only center exception windows when tiling is enabled
+            if (this.settings.get_boolean('tiling-enabled')) {
+                this._centerWindow(win);
+            }
             return;
         }
         if (this._isTileable(win)) {
@@ -536,7 +559,7 @@ class Tiler {
         }
     }
 
-    _onWindowRemoved(workspace, win) {
+    _onWindowRemoved(workspace: any, win: Meta.Window): void {
         const index = this.windows.indexOf(win);
         if (index > -1) this.windows.splice(index, 1);
 
@@ -553,12 +576,12 @@ class Tiler {
         this.queueTile();
     }
 
-    _onActiveWorkspaceChanged() {
+    _onActiveWorkspaceChanged(): void {
         this._disconnectFromWorkspace();
         this._connectToWorkspace();
     }
 
-    _connectToWorkspace() {
+    _connectToWorkspace(): void {
         const workspace = this._workspaceManager.get_active_workspace();
         workspace
             .list_windows()
@@ -578,7 +601,7 @@ class Tiler {
         this.queueTile();
     }
 
-    _disconnectFromWorkspace() {
+    _disconnectFromWorkspace(): void {
         this.windows.slice().forEach((win) => this._onWindowRemoved(null, win));
         ["window-added", "window-removed"].forEach((key) => {
             if (this._signalIds.has(key)) {
@@ -591,9 +614,9 @@ class Tiler {
         });
     }
 
-    queueTile() {
-        if (!this.settings.get_boolean('tiling-enabled')) return;
+    queueTile(): void {
         if (this._tileInProgress || this._tileTimeoutId) return;
+        if (!this.settings.get_boolean('tiling-enabled')) return;
         
         // Check if we should respect maximized windows
         if (this.settings.get_boolean('respect-maximized-windows') && 
@@ -614,14 +637,14 @@ class Tiler {
         );
     }
 
-    tileNow() {
+    tileNow(): void {
         if (!this.settings.get_boolean('tiling-enabled')) return;
         if (!this._tileInProgress) {
             this._tileWindows();
         }
     }
 
-    _splitLayout(windows, area) {
+    _splitLayout(windows: Meta.Window[], area: { x: number; y: number; width: number; height: number }): void {
         if (windows.length === 0) return;
         if (windows.length === 1) {
             windows[0].move_resize_frame(
@@ -670,7 +693,7 @@ class Tiler {
         this._splitLayout(secondaryWindows, secondaryArea);
     }
 
-    _tileWindows() {
+    _tileWindows(): void {
         const windowsToTile = this.windows.filter((win) => !win.minimized);
         if (windowsToTile.length === 0) return;
 
@@ -723,77 +746,29 @@ class Tiler {
     }
 }
 
-// ── TILING TOGGLE QUICK SETTING ───────────────────────────
-const TilingToggle = GObject.registerClass(
-class TilingToggle extends QuickSettings.QuickMenuToggle {
-    _init(extensionObject) {
-        super._init({
-            title: _('Tiling'),
-            subtitle: _('Automatic window tiling'),
-            iconName: 'view-grid-symbolic',
-            toggleMode: true,
-        });
-
-        this._extensionObject = extensionObject;
-
-        // Bind the toggle to our tiling-enabled setting
-        this._settings = extensionObject.getSettings();
-        this._settings.bind('tiling-enabled',
-            this, 'checked',
-            Gio.SettingsBindFlags.DEFAULT);
-
-        // Add a header to the menu
-        this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
-
-        // Add settings menu item
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        const settingsItem = this.menu.addAction(_('Settings'),
-            () => this._extensionObject.openPreferences());
-
-        // Ensure settings are unavailable when screen is locked
-        settingsItem.visible = Main.sessionMode.allowSettings;
-        this.menu._settingsActions[extensionObject.uuid] = settingsItem;
-    }
-});
-
-// ── SYSTEM INDICATOR ────────────────────────────────────────
-const SimpleTilingIndicator = GObject.registerClass(
-class SimpleTilingIndicator extends QuickSettings.SystemIndicator {
-    _init(extensionObject) {
-        super._init();
-
-        // Create the tiling toggle
-        this._tilingToggle = new TilingToggle(extensionObject);
-        
-        // Add the toggle to our items
-        this.quickSettingsItems.push(this._tilingToggle);
-    }
-
-    destroy() {
-        this.quickSettingsItems.forEach(item => item.destroy());
-        super.destroy();
-    }
-});
-
 // ── EXTENSION‑WRAPPER ───────────────────────────────────
-export default class InterimExtension extends Extension {
-    enable() {
-        this.tiler = new Tiler(this);
+export default class SimpleTilingExtension extends Extension {
+    private tiler?: Tiler;
+    private _indicator?: any;
+
+    enable(): void { 
+        this.tiler = new Tiler(this); 
         this.tiler.enable();
         
         // Create and add Quick Settings indicator
         this._indicator = new SimpleTilingIndicator(this);
-        Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
+        (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
     }
-
-    disable() {
+    
+    disable(): void { 
         if (this._indicator) {
             this._indicator.destroy();
-            this._indicator = null;
+            this._indicator = undefined;
         }
+        
         if (this.tiler) {
-            this.tiler.disable();
-            this.tiler = null;
+            this.tiler.disable(); 
+            this.tiler = undefined; 
         }
     }
 }

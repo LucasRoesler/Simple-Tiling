@@ -7,11 +7,10 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
-import GLib from 'gi://GLib';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 export default class SimpleTilingPrefs extends ExtensionPreferences {
-    fillPreferencesWindow(window) {
+    fillPreferencesWindow(window: Adw.PreferencesWindow): void {
         const settings = this.getSettings();
         const page = new Adw.PreferencesPage();
         window.add(page);
@@ -127,7 +126,7 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         rowKeys.set_activatable_widget(btnOpenKeyboard);
     }
 
-    _createExceptionsList(parent, settings) {
+    _createExceptionsList(parent: Adw.PreferencesGroup, settings: Gio.Settings): void {
         // Header row with add button
         const headerRow = new Adw.ActionRow({
             title: 'Application Exceptions',
