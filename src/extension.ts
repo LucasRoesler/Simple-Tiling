@@ -16,9 +16,6 @@ import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 
-// Import ambient types
-import './ambient.js';
-
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA          = 'org.gnome.desktop.wm.keybindings';
 
@@ -26,7 +23,7 @@ const TILING_DELAY_MS    = 20;   // Change Tiling Window Delay
 const CENTERING_DELAY_MS = 5;    // Change Centered Window Delay
 
 const KEYBINDINGS: { [key: string]: (self: any) => void } = {
-    'swap-master-window': (self) => self._swapWithMaster(),
+    'swap-primary-window': (self) => self._swapWithPrimary(),
     'swap-left-window':   (self) => self._swapInDirection('left'),
     'swap-right-window':  (self) => self._swapInDirection('right'),
     'swap-up-window':     (self) => self._swapInDirection('up'),
@@ -172,7 +169,7 @@ class InteractionHandler {
         if (tgt) tgt.activate(global.get_current_time());
     }
 
-    _swapWithMaster(): void {
+    _swapWithPrimary(): void {
         const w = this.tiler.windows;
         if (w.length < 2) return;
         const foc = global.display.get_focus_window();
@@ -525,7 +522,7 @@ class Tiler {
         }
         if (this._isTileable(win)) {
             // Always track tileable windows, even when tiling is disabled
-            if (this.settings.get_string("new-window-behavior") === "master") {
+            if (this.settings.get_string("new-window-behavior") === "primary") {
                 this.windows.unshift(win);
             } else {
                 this.windows.push(win);
@@ -726,19 +723,19 @@ class Tiler {
             return;
         }
         const gap = Math.floor(this._innerGap / 2);
-        const masterWidth = Math.floor(innerArea.width / 2) - gap;
-        const master = windowsToTile[0];
-        master.move_resize_frame(
+        const primaryWidth = Math.floor(innerArea.width / 2) - gap;
+        const primary = windowsToTile[0];
+        primary.move_resize_frame(
             true,
             innerArea.x,
             innerArea.y,
-            masterWidth,
+            primaryWidth,
             innerArea.height
         );
         const stackArea = {
-            x: innerArea.x + masterWidth + this._innerGap,
+            x: innerArea.x + primaryWidth + this._innerGap,
             y: innerArea.y,
-            width: innerArea.width - masterWidth - this._innerGap,
+            width: innerArea.width - primaryWidth - this._innerGap,
             height: innerArea.height,
         };
         this._splitLayout(windowsToTile.slice(1), stackArea);

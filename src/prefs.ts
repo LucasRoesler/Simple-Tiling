@@ -80,18 +80,18 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
 
         const rowNewWindow = new Adw.ComboRow({
             title: 'Open new windows as',
-            subtitle: 'Whether a new window starts as Master or Stack',
+            subtitle: 'Whether a new window starts as Primary or Stack',
             model: new Gtk.StringList({
-                strings: ['Stack Window (Default)', 'Master Window'],
+                strings: ['Stack Window (Default)', 'Primary Window'],
             }),
         });
         groupBehavior.add(rowNewWindow);
 
         const currentBehavior = settings.get_string('new-window-behavior');
-        rowNewWindow.selected = currentBehavior === 'master' ? 1 : 0;
+        rowNewWindow.selected = currentBehavior === 'primary' ? 1 : 0;
 
         rowNewWindow.connect('notify::selected', () => {
-            const newVal = rowNewWindow.selected === 1 ? 'master' : 'stack';
+            const newVal = rowNewWindow.selected === 1 ? 'primary' : 'stack';
             settings.set_string('new-window-behavior', newVal);
         });
 

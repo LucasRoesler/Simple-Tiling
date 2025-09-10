@@ -2,9 +2,9 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.simple-tiling.lucasroesler" path="/org/gnome/shell/extensions/simple-tiling/lucasroesler/">
     
-    <key name="swap-master-window" type="as">
+    <key name="swap-primary-window" type="as">
       <default><![CDATA[['<Super>Return']]]></default>
-      <summary>Swap current window with master.</summary>
+      <summary>Swap current window with primary.</summary>
     </key>
     <key name="swap-up-window" type="as">
       <default><![CDATA[['<Super>Up']]]></default>
@@ -56,7 +56,7 @@
     <key name="new-window-behavior" type="s">
       <default>'stack'</default>
       <summary>Behavior for newly opened windows.</summary>
-      <description>Determines if a new window is added as master or stack window.</description>
+      <description>Determines if a new window is added as primary or stack window.</description>
     </key>
 
     <key name="window-exceptions" type="as">
