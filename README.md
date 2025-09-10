@@ -20,14 +20,36 @@ This extension was built from the ground up to be stable and performant on **GNO
 
 ## Features
 
-* **Automatic Tiling:** Windows are automatically arranged into a master and stack layout without any manual intervention.
-* **Master & Fibonacci Stack Layout:** The first window becomes the "master," occupying the left half of the screen. All subsequent windows form a "stack" on the right half, which is tiled using a space-efficient Fibonacci-style algorithm.
-* **Configurable New Window Behavior:** Choose whether new windows open as the new master or are appended to the end of the stack.
+### Layout System
+
+Simple Tiling uses a **Primary-Stack** layout system:
+
+* **Primary Window:** The main window that occupies the left half of your screen. This is typically your main focus window.
+* **Stack Windows:** All other windows are arranged in a stack on the right half of the screen using a Fibonacci spiral algorithm for optimal space usage.
+
+```
+┌─────────────┬─────────────┐
+│             │   Stack 1   │
+│             ├─────────────┤
+│   Primary   │   Stack 2   │
+│   Window    ├──────┬──────┤
+│             │Stack │Stack │
+│             │  3   │  4   │
+└─────────────┴──────┴──────┘
+```
+
+* **Automatic Tiling:** Windows are automatically arranged into this primary-stack layout without any manual intervention.
+* **Configurable New Window Behavior:** Choose how new windows are added:
+  - **As New Primary** (replaces current primary): The new window becomes the primary, pushing the previous primary to the top of the stack
+  - **To Stack** (default): New windows are added to the end of the stack, preserving the current primary
 * **Tiling Lock:** The layout is strict by default. If you manually move a window with the mouse and drop it in an empty space, it will automatically "snap back" to its designated tile position, preserving the integrity of the layout.
 * **Interactive Window Swapping:**
     * **Drag & Drop:** Swap any two windows by simply dragging one and dropping it over the other.
-    * **Keyboard Shortcuts:** A full set of keyboard shortcuts allows you to swap the focused window with the master or with its nearest neighbor in any direction (left, right, up, down).
-* **Interactive Window Focus Switcher:** Change the current window focus with a set of customizable keyboard shortcuts in every direction (left, right, up, down).
+    * **Keyboard Shortcuts:** A full set of keyboard shortcuts allows you to swap the focused window with the primary or with its nearest neighbor in any direction (left, right, up, down).
+        * **Swap with Primary:** `Super+Return` - Swap the current window with the primary window (left side)
+        * **Directional Swapping:** `Super+Arrow Keys` - Swap with windows in any direction
+* **Interactive Window Focus Navigation:** Change the current window focus with a set of customizable keyboard shortcuts in every direction.
+    * **Focus Navigation:** `Alt+Arrow Keys` - Move focus to windows in any direction (left, right, up, down)
 * **Simple Settings Panel:** A simple settings panel within the gnome extension manager menu to adjust key bindings, window gaps / margins and window behavior.
 * **External Exception List:** Use a simple `exceptions.txt` file to list applications (by their `WM_CLASS` or `App ID`) that should be ignored by the tiling manager.
 * **Smart Pop-up Handling:** Windows on the exception list, as well as dialogs and other pop-ups, are automatically centered and kept "always on top" for a smooth workflow.
@@ -80,11 +102,35 @@ The repository includes a Makefile that produces ready‑to‑install ZIP packag
 
 #### Keyboard Shortcuts
 
-All keyboard shortcuts can be configured through the Settings panel of Simple Tiling (which can be found in the Gnome Extension Application):
-1.  Open **Settings**.
-2.  Navigate to **Keyboard** -> **View and Customize Shortcuts**.
-3.  Scroll down to the **Custom Shortcuts** section at the bottom.
-4.  You will find all shortcuts for "Simple Tiling" listed there and can change them to your preference.
+Simple Tiling provides a comprehensive set of keyboard shortcuts for efficient window management:
+
+| Command | Default Shortcut | Description |
+|---------|-----------------|-------------|
+| **Window Swapping** | | |
+| Swap with Primary | `Super+Return` | Swaps the currently focused window with the primary window (left half of screen) |
+| Swap Left | `Super+Left` | Swaps the current window with the window to its left |
+| Swap Right | `Super+Right` | Swaps the current window with the window to its right |
+| Swap Up | `Super+Up` | Swaps the current window with the window above it |
+| Swap Down | `Super+Down` | Swaps the current window with the window below it |
+| **Focus Navigation** | | |
+| Focus Left | `Alt+Left` | Moves focus to the window on the left |
+| Focus Right | `Alt+Right` | Moves focus to the window on the right |
+| Focus Up | `Alt+Up` | Moves focus to the window above |
+| Focus Down | `Alt+Down` | Moves focus to the window below |
+
+**Customizing Shortcuts:**
+
+All keyboard shortcuts can be customized through the Simple Tiling settings panel:
+1. Open the **GNOME Extensions** application
+2. Find **Simple Tiling** and click on the settings/preferences icon
+3. Navigate to the keyboard shortcuts section
+4. Click on any shortcut to set a new key combination
+
+Alternatively, you can also modify shortcuts through GNOME Settings:
+1. Open **Settings**
+2. Navigate to **Keyboard** -> **View and Customize Shortcuts**
+3. Scroll down to the **Custom Shortcuts** section at the bottom
+4. Find all "Simple Tiling" shortcuts listed there and modify as needed
 
 #### Ignoring Applications (`exceptions.txt`)
 
@@ -106,7 +152,12 @@ You can adjust the window gap margins (inner gaps between windows, outer gaps ho
 
 #### Configurable New Window Behavior
 
-A toogle setting allows you to control the behavior for newly opened windows. You can choose to either have them become the new master window (pushing the old master into the stack) or have them appended to the stack as the last window (Default).
+This setting controls where newly opened windows are placed in the tiling layout:
+
+* **Stack** (Default): New windows are added to the end of the stack on the right side, keeping your current primary window in place
+* **Primary**: New windows become the new primary window on the left, pushing the previous primary to the top of the stack
+
+You can change this behavior in the Simple Tiling settings panel within the GNOME Extensions application.
 
 #### Adjusting Tiling Window Delays
 
