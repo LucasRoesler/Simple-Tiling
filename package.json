@@ -1,6 +1,6 @@
 {
   "name": "simple-tiling",
-  "version": "7.2.0",
+  "version": "8.0.0",
   "description": "GNOME Shell extension for automatic window tiling",
   "author": "Lucas Roesler",
   "license": "MIT",

@@ -1,6 +1,6 @@
 
 <h1 align="center">
-Simple Tiling 
+Simple Tiling
 </span>
 <h4 align="center">
 <span style="display:inline-flex; align-items:center; gap:12px;">
@@ -10,13 +10,26 @@ A lightweight, opinionated, and automatic tiling window manager for GNOME Shell
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> **Note:** This is a fork and TypeScript refactor of the excellent [Simple Tiling extension by Domoel](https://github.com/Domoel/Simple-Tiling). The original extension provides a solid foundation for automatic tiling in GNOME Shell. This fork adds TypeScript support, maximized window handling, and other enhancements while aiming to maintain the simplicity of the original design.
+
 <img width="2560" height="1440" alt="Simple-Tiling-v6" src="https://github.com/user-attachments/assets/eb0f7cc3-6a5a-4036-8a1e-8f945c52e55c" />
 
 ## Introduction
 
-Simple Tiling is a GNOME Shell extension created for users who want a clean, predictable, and automatic tiling layout without the complexity of larger, more feature-heavy tiling extensions. It is designed to be simple to configure and intuitive to use, focusing on a core set of essential tiling features.
+Simple Tiling is a GNOME Shell extension for users who want a clean, predictable, and automatic tiling layout without the complexity of larger, more feature-heavy tiling extensions. Originally created by [Domoel](https://github.com/Domoel), this fork enhances the extension with TypeScript for better maintainability and adds several user-requested features while preserving the core simplicity.
 
-This extension was built from the ground up to be stable and performant on **GNOME Shell 3.38**. However it is now also supporting modern gnome shells up to **version 48**.
+This extension was built from the ground up to be stable and performant on **GNOME Shell 3.38** and now supports modern GNOME shells up to **version 48**.
+
+## What's Different in This Fork
+
+This fork builds upon Domoel's excellent foundation with the following enhancements:
+
+* **TypeScript Refactor:** Complete migration to TypeScript for improved type safety, better IDE support, and easier maintenance
+* **Maximized Window Support:** New `respect-maximized-windows` setting that allows maximized windows to remain maximized instead of being forced into the tiling layout
+* **Settings-Based Exceptions:** Window exceptions can now be managed through the extension settings GUI in addition to the `exceptions.txt` file
+* **Improved Terminology:** Uses "Primary" instead of "Master" throughout for clearer, more inclusive language
+* **Enhanced Documentation:** Comprehensive keybinding documentation and clearer layout explanations
+* **Dropped legacy GNOME Integration:** This version focuses on modern GNOME versions (3.38 - 48) and does not include legacy GNOME <=3.36 support
 
 ## Features
 
@@ -75,7 +88,7 @@ The repository includes a Makefile that produces ready‑to‑install ZIP packag
 
 1. **Clone the Source**
    ```bash
-   git clone https://github.com/Domoel/Simple-Tiling.git
+   git clone https://github.com/LucasRoesler/Simple-Tiling.git
    cd Simple-Tiling
    ```
 
@@ -161,7 +174,7 @@ You can change this behavior in the Simple Tiling settings panel within the GNOM
 
 #### Adjusting Tiling Window Delays
 
-If you have race condition issues between mutter (Gnome WM) and the Simple Tiling extension, you can adjust the window delay settings (both for tiling windows as well as for centered application from the exceptions list) directly in the extensions.js (~/.local/share/gnome-shell/extensions/simple-tiling@domoel/extension.js). You will find the parameter at line 17 & 18. Defaults to "20" for General Tiling Window Delay and "5" for centered Apps on the Exception List.
+If you have race condition issues between mutter (Gnome WM) and the Simple Tiling extension, you can adjust the window delay settings (both for tiling windows as well as for centered application from the exceptions list) directly in the extensions.js (~/.local/share/gnome-shell/extensions/simple-tiling@lucasroesler/extension.js). You will find the parameter at line 17 & 18. Defaults to "20" for General Tiling Window Delay and "5" for centered Apps on the Exception List.
 
 ## Future Development
 
@@ -174,3 +187,9 @@ This extension was built to solve a specific need. However, future enhancements 
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
 
+## Credits
+
+* **Original Author:** [Domoel](https://github.com/Domoel) - Creator of the original Simple Tiling extension
+* **Fork Maintainer:** [Lucas Roesler](https://github.com/LucasRoesler) - TypeScript refactor and additional features
+
+Special thanks to Domoel for creating and maintaining the original Simple Tiling extension, which provides an excellent foundation for automatic tiling in GNOME Shell.

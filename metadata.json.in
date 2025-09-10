@@ -1,7 +1,7 @@
 {
   "uuid": "__UUID__",
   "name": "Simple Tiling",
-  "description": "A Simple Tiling Extension for Gnome Shell.",
+  "description": "A Simple Tiling Extension for GNOME Shell with TypeScript support and maximized window handling. Fork of Domoel's Simple Tiling.",
   "version": __VERSION__,
   "shell-version": [
     "45",
@@ -11,6 +11,6 @@
   ],
   "settings-schema": "org.gnome.shell.extensions.simple-tiling.lucasroesler",
   "preferences_ui": "prefs.js",
-  "url": "https://github.com/Domoel/Simple-Tiling",
+  "url": "https://github.com/LucasRoesler/Simple-Tiling",
   "gettext-domain": "__UUID__"
 }

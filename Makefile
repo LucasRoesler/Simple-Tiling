@@ -4,7 +4,7 @@
 ###############################################################################
 
 UUID     := simple-tiling@lucasroesler
-VERSION  := 7.2
+VERSION  := 8.0
 EXTDIR   := $(HOME)/.local/share/gnome-shell/extensions
 
 # Source and output directories
@@ -32,27 +32,27 @@ build: typescript
 	@mkdir -p $(BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)/icons
 	@mkdir -p $(BUILD_DIR)/schemas
-	
+
 	# Copy compiled JavaScript from dist
 	@cp -r $(DIST_DIR)/* $(BUILD_DIR)/
-	
+
 	# Generate metadata.json
 	@sed 's/__VERSION__/$(VERSION)/g; s/__UUID__/$(UUID)/g' metadata.json.in > $(BUILD_DIR)/metadata.json
-	
+
 	# Copy schema files
 	@cp schemas/*.xml $(BUILD_DIR)/schemas/
 	@glib-compile-schemas $(BUILD_DIR)/schemas/
-	
+
 	# Copy additional files
 	@for file in $(EXTRA_FILES); do \
 		[ -f $$file ] && cp $$file $(BUILD_DIR)/ || true; \
 	done
-	
+
 	# Copy icon files
 	@for file in $(ICON_FILES); do \
 		[ -f $$file ] && cp $$file $(BUILD_DIR)/icons/ || true; \
 	done
-	
+
 	@echo "✓  Extension built in $(BUILD_DIR)/"
 
 # Create distributable package
