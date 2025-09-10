@@ -84,7 +84,7 @@ Use the [GNOME Shell Extensions website](https://extensions.gnome.org/extension/
 
 #### Manual Installation
 
-The repository includes a Makefile that produces ready‑to‑install ZIP packages for the three supported Gnome‑Shell lines (a legacy build for Gnome-Shell 3.38, an interim build for Gnome-Shell 40 - 44 and a modern build for Gnome-Shell 45+).
+This extension uses npm scripts for building and installation.
 
 1. **Clone the Source**
    ```bash
@@ -92,24 +92,41 @@ The repository includes a Makefile that produces ready‑to‑install ZIP packag
    cd Simple-Tiling
    ```
 
-2. **Install the package that matches your GNOME-Shell version**
-
-   Open the Terminal within the Simple-Tiling directory and run
+2. **Install dependencies**
    ```bash
-   make install-legacy        # Installs Legacy Extension (Gnome-Shell 3.38)
-   make install-interim       # Installs Interim Extension (Gnome-Shell 40 - 44)
-   make install-modern        # Installs Modern Extension (Gnome-Shell 45+)
+   npm install
    ```
-   **Note:** This command will directly install the extension in the choosen variant (legacy, interim or modern). If you want to manually create and upload the extension to your gnome extensions directory `(~/.local/share/gnome-shell/extensions)` you can just run `make build` to create all versions as .zip or `make build-legacy`, `make build-interim` or `make build-modern` to create them seperately as .zip. To enable them you need to unzip these archives and put them into your extensions directory.
 
-4.  **Reload the shell**
-    ```bash
-    Press Alt + F2, type  r , hit ↩   (works for X11 and Wayland)
-    ```
-5.  **Clean up (optional)**
-    ```bash
-    make clean        # perform this command in the downloaded folder to remove builds and generated ZIPs
-    ```
+3. **Build and install the extension**
+   ```bash
+   npm run build         # Build the extension
+   npm run install:ext   # Install to GNOME Shell
+   ```
+   
+   Or use the convenience command:
+   ```bash
+   npm run quick         # Build and install in one command
+   ```
+
+4. **Enable the extension**
+   ```bash
+   gnome-extensions enable simple-tiling@lucasroesler
+   ```
+
+5. **Reload the shell**
+   ```bash
+   # X11: Press Alt + F2, type 'r', press Enter
+   # Wayland: Log out and log back in
+   ```
+
+6. **Other useful commands**
+   ```bash
+   npm run clean         # Remove build artifacts
+   npm run package       # Create distributable ZIP
+   npm run reinstall     # Reinstall extension
+   npm run uninstall     # Remove extension
+   npm run              # Show all available commands
+   ```
 
 ## Configuration
 
