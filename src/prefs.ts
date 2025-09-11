@@ -8,6 +8,8 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
+import GObject from 'gi://GObject';
+import Gdk from 'gi://Gdk';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 export default class SimpleTilingPrefs extends ExtensionPreferences {
@@ -107,24 +109,45 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         this._createExceptionsList(groupExceptions, settings);
 
         // ── KEYBINDINGS ────────────────────────────────────────────
-        const groupKeys = new Adw.PreferencesGroup({ title: 'Keybindings' });
+        const groupKeys = new Adw.PreferencesGroup({ 
+            title: 'Keyboard Shortcuts',
+            description: 'Configure keyboard shortcuts for window management actions'
+        });
         page.add(groupKeys);
 
-        const rowKeys = new Adw.ActionRow({
-            title: 'Configure Shortcuts',
-            subtitle: 'Adjust all shortcuts in GNOME Keyboard settings.',
+        // Window Swapping shortcuts
+        const swapExpanderRow = new Adw.ExpanderRow({
+            title: 'Window Swapping',
+            subtitle: 'Swap windows in different directions'
         });
-        groupKeys.add(rowKeys);
+        groupKeys.add(swapExpanderRow);
 
-        const btnOpenKeyboard = new Gtk.Button({ label: 'Open Keyboard Settings' });
-        btnOpenKeyboard.connect('clicked', () => {
-            const appInfo = Gio.AppInfo.create_from_commandline(
-                'gnome-control-center keyboard', null, Gio.AppInfoCreateFlags.NONE
-            );
-            appInfo.launch([], null);
+        this._addKeybindingRow(swapExpanderRow, settings, 'swap-primary-window', 
+            'Swap with Primary', 'Swap current window with the primary window');
+        this._addKeybindingRow(swapExpanderRow, settings, 'swap-left-window',
+            'Swap Left', 'Swap current window with window to the left');
+        this._addKeybindingRow(swapExpanderRow, settings, 'swap-right-window',
+            'Swap Right', 'Swap current window with window to the right');
+        this._addKeybindingRow(swapExpanderRow, settings, 'swap-up-window',
+            'Swap Up', 'Swap current window with window above');
+        this._addKeybindingRow(swapExpanderRow, settings, 'swap-down-window',
+            'Swap Down', 'Swap current window with window below');
+
+        // Window Focus shortcuts
+        const focusExpanderRow = new Adw.ExpanderRow({
+            title: 'Window Focus',
+            subtitle: 'Move focus between windows'
         });
-        rowKeys.add_suffix(btnOpenKeyboard);
-        rowKeys.set_activatable_widget(btnOpenKeyboard);
+        groupKeys.add(focusExpanderRow);
+
+        this._addKeybindingRow(focusExpanderRow, settings, 'focus-left',
+            'Focus Left', 'Move focus to window on the left');
+        this._addKeybindingRow(focusExpanderRow, settings, 'focus-right',
+            'Focus Right', 'Move focus to window on the right');
+        this._addKeybindingRow(focusExpanderRow, settings, 'focus-up',
+            'Focus Up', 'Move focus to window above');
+        this._addKeybindingRow(focusExpanderRow, settings, 'focus-down',
+            'Focus Down', 'Move focus to window below');
     }
 
     _createExceptionsList(parent: Adw.PreferencesGroup, settings: Gio.Settings): void {
@@ -219,6 +242,130 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                         this._addExceptionRow(parentGroup, settings, newException);
                     }
                 }
+            }
+            dialog.close();
+        });
+
+        dialog.present();
+    }
+
+    _addKeybindingRow(parent: Adw.ExpanderRow, settings: Gio.Settings, key: string, title: string, subtitle: string): void {
+        const row = new Adw.ActionRow({
+            title: title,
+            subtitle: subtitle
+        });
+
+        // Get current shortcut
+        const shortcuts = settings.get_strv(key);
+        const currentShortcut = shortcuts.length > 0 ? shortcuts[0] : '';
+
+        // Create shortcut label
+        const shortcutLabel = new Gtk.ShortcutLabel({
+            accelerator: currentShortcut,
+            valign: Gtk.Align.CENTER
+        });
+
+        // Create edit button
+        const editButton = new Gtk.Button({
+            icon_name: 'document-edit-symbolic',
+            valign: Gtk.Align.CENTER,
+            css_classes: ['flat'],
+            tooltip_text: 'Edit shortcut'
+        });
+
+        // Create clear button
+        const clearButton = new Gtk.Button({
+            icon_name: 'edit-clear-symbolic',
+            valign: Gtk.Align.CENTER,
+            css_classes: ['flat'],
+            tooltip_text: 'Clear shortcut',
+            sensitive: currentShortcut !== ''
+        });
+
+        // Add widgets to row
+        row.add_suffix(shortcutLabel);
+        row.add_suffix(editButton);
+        row.add_suffix(clearButton);
+
+        // Handle edit button click
+        editButton.connect('clicked', () => {
+            this._captureKeybinding(settings, key, shortcutLabel, clearButton);
+        });
+
+        // Handle clear button click
+        clearButton.connect('clicked', () => {
+            settings.set_strv(key, []);
+            shortcutLabel.set_accelerator('');
+            clearButton.set_sensitive(false);
+        });
+
+        // Update when settings change
+        settings.connect(`changed::${key}`, () => {
+            const newShortcuts = settings.get_strv(key);
+            const newShortcut = newShortcuts.length > 0 ? newShortcuts[0] : '';
+            shortcutLabel.set_accelerator(newShortcut);
+            clearButton.set_sensitive(newShortcut !== '');
+        });
+
+        parent.add_row(row);
+    }
+
+    _captureKeybinding(settings: Gio.Settings, key: string, label: Gtk.ShortcutLabel, clearButton: Gtk.Button): void {
+        // Create a dialog for capturing the keybinding
+        const dialog = new Adw.MessageDialog({
+            heading: 'Set Keyboard Shortcut',
+            body: 'Press the key combination you want to use, or press Escape to cancel.'
+        });
+
+        // Create a label to show the captured shortcut
+        const captureLabel = new Gtk.Label({
+            label: 'Press keys...',
+            css_classes: ['title-2']
+        });
+        dialog.set_extra_child(captureLabel);
+
+        dialog.add_response('cancel', 'Cancel');
+        dialog.add_response('set', 'Set Shortcut');
+        dialog.set_response_enabled('set', false);
+        dialog.set_response_appearance('set', Adw.ResponseAppearance.SUGGESTED);
+
+        let capturedAccel = '';
+
+        // Create event controller for key capture
+        const keyController = new Gtk.EventControllerKey();
+        keyController.connect('key-pressed', (controller, keyval, keycode, state) => {
+            // Ignore single modifier keys
+            if (keyval === Gdk.KEY_Shift_L || keyval === Gdk.KEY_Shift_R ||
+                keyval === Gdk.KEY_Control_L || keyval === Gdk.KEY_Control_R ||
+                keyval === Gdk.KEY_Alt_L || keyval === Gdk.KEY_Alt_R ||
+                keyval === Gdk.KEY_Super_L || keyval === Gdk.KEY_Super_R ||
+                keyval === Gdk.KEY_Meta_L || keyval === Gdk.KEY_Meta_R) {
+                return false;
+            }
+
+            // Handle Escape to cancel
+            if (keyval === Gdk.KEY_Escape) {
+                dialog.close();
+                return true;
+            }
+
+            // Parse the accelerator
+            const accel = Gtk.accelerator_name(keyval, state);
+            if (accel && accel !== '') {
+                capturedAccel = accel;
+                captureLabel.set_label(accel);
+                dialog.set_response_enabled('set', true);
+            }
+            return true;
+        });
+
+        dialog.add_controller(keyController);
+
+        dialog.connect('response', (dialog, response) => {
+            if (response === 'set' && capturedAccel) {
+                settings.set_strv(key, [capturedAccel]);
+                label.set_accelerator(capturedAccel);
+                clearButton.set_sensitive(true);
             }
             dialog.close();
         });
