@@ -16,23 +16,24 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
+import Shell from 'gi://Shell';
 
 // ── CONST ────────────────────────────────────────────
-const WM_SCHEMA          = 'org.gnome.desktop.wm.keybindings';
+const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
 
-const TILING_DELAY_MS    = 20;   // Change Tiling Window Delay
+const TILING_DELAY_MS = 20;   // Change Tiling Window Delay
 const CENTERING_DELAY_MS = 5;    // Change Centered Window Delay
 
 const KEYBINDINGS: { [key: string]: (self: any) => void } = {
     'swap-primary-window': (self) => self._swapWithPrimary(),
-    'swap-left-window':   (self) => self._swapInDirection('left'),
-    'swap-right-window':  (self) => self._swapInDirection('right'),
-    'swap-up-window':     (self) => self._swapInDirection('up'),
-    'swap-down-window':   (self) => self._swapInDirection('down'),
-    'focus-left':         (self) => self._focusInDirection('left'),
-    'focus-right':        (self) => self._focusInDirection('right'),
-    'focus-up':           (self) => self._focusInDirection('up'),
-    'focus-down':         (self) => self._focusInDirection('down'),
+    'swap-left-window': (self) => self._swapInDirection('left'),
+    'swap-right-window': (self) => self._swapInDirection('right'),
+    'swap-up-window': (self) => self._swapInDirection('up'),
+    'swap-down-window': (self) => self._swapInDirection('down'),
+    'focus-left': (self) => self._focusInDirection('left'),
+    'focus-right': (self) => self._focusInDirection('right'),
+    'focus-up': (self) => self._focusInDirection('up'),
+    'focus-down': (self) => self._focusInDirection('down'),
 };
 
 // ── HELPER‑FUNCTION ────────────────────────────────────────
@@ -45,17 +46,17 @@ function getPointerXY(): [number, number] {
     const ev = Clutter.get_current_event();
     if (ev) {
         const coords = ev.get_coords();
-        if (Array.isArray(coords)) 
+        if (Array.isArray(coords))
             return coords;
     }
 
     const device = Clutter.get_default_backend()
-                          .get_default_seat()
-                          .get_pointer();
+        .get_default_seat()
+        .get_pointer();
     if (device) {
         try {
             return (device as any).get_position();
-        } catch {}
+        } catch { }
     }
     return [0, 0];
 }
@@ -77,13 +78,13 @@ class InteractionHandler {
     private _settingsChangedId: number | null;
 
     constructor(tiler: Tiler) {
-        this.tiler              = tiler;
-        this._settings          = this.tiler.settings;
-        this._wmSettings        = new Gio.Settings({ schema: WM_SCHEMA });
+        this.tiler = tiler;
+        this._settings = this.tiler.settings;
+        this._wmSettings = new Gio.Settings({ schema: WM_SCHEMA });
 
-        this._wmKeysToDisable   = [];
-        this._savedWmShortcuts  = {};
-        this._grabOpIds         = [];
+        this._wmKeysToDisable = [];
+        this._savedWmShortcuts = {};
+        this._grabOpIds = [];
         this._settingsChangedId = null;
     }
 
@@ -100,8 +101,10 @@ class InteractionHandler {
 
         this._grabOpIds.push(
             global.display.connect('grab-op-begin',
-                (_: any, __: any, win: Meta.Window) => { if (this.tiler.windows.includes(win))
-                                      this.tiler.grabbedWindow = win; })
+                (_: any, __: any, win: Meta.Window) => {
+                    if (this.tiler.windows.includes(win))
+                        this.tiler.grabbedWindow = win;
+                })
         );
         this._grabOpIds.push(
             global.display.connect('grab-op-end', () => this._onGrabEnd())
@@ -123,17 +126,23 @@ class InteractionHandler {
         this._grabOpIds = [];
     }
 
-    _bind(key: string, handler: (self: InteractionHandler) => void): void {
-        global.display.add_keybinding(
-            key,
-            this._settings,
-            Meta.KeyBindingFlags.NONE,
-            (..._args) => handler(this)
-        );
+    _bindAllShortcuts(): void {
+        for (const [key, handler] of Object.entries(KEYBINDINGS)) {
+            Main.wm.addKeybinding(
+                key,
+                this._settings,
+                Meta.KeyBindingFlags.NONE,
+                Shell.ActionMode.NORMAL,
+                () => handler(this)
+            );
+        }
     }
 
-    _bindAllShortcuts(): void  { for (const [k,h] of Object.entries(KEYBINDINGS)) this._bind(k, h); }
-    _unbindAllShortcuts(): void { for (const k in KEYBINDINGS) global.display.remove_keybinding(k); }
+    _unbindAllShortcuts(): void {
+        for (const key in KEYBINDINGS) {
+            Main.wm.removeKeybinding(key);
+        }
+    }
 
     _onSettingsChanged(): void {
         this._unbindAllShortcuts();
@@ -153,13 +162,13 @@ class InteractionHandler {
         if (schema.has_key('toggle-tiled-left'))
             keys.push('toggle-tiled-left', 'toggle-tiled-right');
         else {
-            add('tile-left');  add('tile-right');
+            add('tile-left'); add('tile-right');
         }
 
         if (keys.length) {
             this._wmKeysToDisable = keys;
             keys.forEach(k => this._savedWmShortcuts[k] =
-                             this._wmSettings.get_value(k));
+                this._wmSettings.get_value(k));
         }
     }
 
@@ -177,7 +186,7 @@ class InteractionHandler {
         if (!foc || !w.includes(foc)) return;
         const idx = w.indexOf(foc);
         if (idx > 0) [w[0], w[idx]] = [w[idx], w[0]];
-        else         [w[0], w[1]]   = [w[1], w[0]];
+        else[w[0], w[1]] = [w[1], w[0]];
         this.tiler.tileNow();
         w[0]?.activate(global.get_current_time());
     }
@@ -187,7 +196,7 @@ class InteractionHandler {
         if (!src || !this.tiler.windows.includes(src)) return;
         let tgt = null;
         const idx = this.tiler.windows.indexOf(src);
-        if (idx === 0 && direction==='right' && this.tiler.windows.length>1)
+        if (idx === 0 && direction === 'right' && this.tiler.windows.length > 1)
             tgt = this.tiler.windows[1];
         else
             tgt = this._findTargetInDirection(src, direction);
@@ -200,23 +209,23 @@ class InteractionHandler {
     }
 
     _findTargetInDirection(src: Meta.Window, dir: string): Meta.Window | null {
-        const sRect = src.get_frame_rect(), cand=[];
+        const sRect = src.get_frame_rect(), cand = [];
         for (const win of this.tiler.windows) {
-            if (win===src) continue;
-            const r=win.get_frame_rect();
-            if (dir==='left' && r.x<sRect.x)  cand.push(win);
-            if (dir==='right'&& r.x>sRect.x)  cand.push(win);
-            if (dir==='up'   && r.y<sRect.y)  cand.push(win);
-            if (dir==='down' && r.y>sRect.y)  cand.push(win);
+            if (win === src) continue;
+            const r = win.get_frame_rect();
+            if (dir === 'left' && r.x < sRect.x) cand.push(win);
+            if (dir === 'right' && r.x > sRect.x) cand.push(win);
+            if (dir === 'up' && r.y < sRect.y) cand.push(win);
+            if (dir === 'down' && r.y > sRect.y) cand.push(win);
         }
         if (!cand.length) return null;
-        let best=null, min=Infinity;
+        let best = null, min = Infinity;
         for (const w of cand) {
-            const r=w.get_frame_rect();
-            const dev = (dir==='left'||dir==='right')
-                       ? Math.abs(sRect.y - r.y)
-                       : Math.abs(sRect.x - r.x);
-            if (dev<min){min=dev; best=w;}
+            const r = w.get_frame_rect();
+            const dev = (dir === 'left' || dir === 'right')
+                ? Math.abs(sRect.y - r.y)
+                : Math.abs(sRect.x - r.x);
+            if (dev < min) { min = dev; best = w; }
         }
         return best;
     }
@@ -236,23 +245,25 @@ class InteractionHandler {
     }
 
     _findTargetUnderPointer(exclude: Meta.Window): Meta.Window | null {
-        const [x,y] = getPointerXY();
+        const [x, y] = getPointerXY();
         const wins = global.get_window_actors()
-                           .map(a=>a.meta_window)
-                           .filter(w=>w && w!==exclude &&
-                                      this.tiler.windows.includes(w) && (()=>{const f=w.get_frame_rect();
-                                           return x>=f.x && x<f.x+f.width &&
-                                                  y>=f.y && y<f.y+f.height;})());
-        if (wins.length) return wins[wins.length-1];
+            .map(a => a.meta_window)
+            .filter(w => w && w !== exclude &&
+                this.tiler.windows.includes(w) && (() => {
+                    const f = w.get_frame_rect();
+                    return x >= f.x && x < f.x + f.width &&
+                        y >= f.y && y < f.y + f.height;
+                })());
+        if (wins.length) return wins[wins.length - 1];
 
-        let best=null, max=0, sRect=exclude.get_frame_rect();
+        let best = null, max = 0, sRect = exclude.get_frame_rect();
         for (const w of this.tiler.windows) {
-            if (w===exclude) continue;
-            const r=w.get_frame_rect();
-            const ovX=Math.max(0, Math.min(sRect.x+sRect.width, r.x+r.width)-Math.max(sRect.x,r.x));
-            const ovY=Math.max(0, Math.min(sRect.y+sRect.height,r.y+r.height)-Math.max(sRect.y,r.y));
-            const area=ovX*ovY;
-            if (area>max){max=area; best=w;}
+            if (w === exclude) continue;
+            const r = w.get_frame_rect();
+            const ovX = Math.max(0, Math.min(sRect.x + sRect.width, r.x + r.width) - Math.max(sRect.x, r.x));
+            const ovY = Math.max(0, Math.min(sRect.y + sRect.height, r.y + r.height) - Math.max(sRect.y, r.y));
+            const area = ovX * ovY;
+            if (area > max) { max = area; best = w; }
         }
         return best;
     }
@@ -260,73 +271,73 @@ class InteractionHandler {
 
 // ── TILING TOGGLE QUICK SETTING ───────────────────────────
 const TilingToggle = GObject.registerClass(
-class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
-    private _extensionObject!: Extension;
-    private _settings!: Gio.Settings;
+    class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
+        private _extensionObject!: Extension;
+        private _settings!: Gio.Settings;
 
-    _init(extensionObject: Extension) {
-        super._init({
-            title: _('Tiling'),
-            subtitle: _('Automatic window tiling'),
-            iconName: 'view-grid-symbolic',
-            toggleMode: true,
-        });
+        _init(extensionObject: Extension) {
+            super._init({
+                title: _('Tiling'),
+                subtitle: _('Automatic window tiling'),
+                iconName: 'view-grid-symbolic',
+                toggleMode: true,
+            });
 
-        this._extensionObject = extensionObject;
+            this._extensionObject = extensionObject;
 
-        // Bind the toggle to our tiling-enabled setting
-        this._settings = extensionObject.getSettings();
-        this._settings.bind('tiling-enabled',
-            this as any, 'checked',
-            Gio.SettingsBindFlags.DEFAULT);
+            // Bind the toggle to our tiling-enabled setting
+            this._settings = extensionObject.getSettings();
+            this._settings.bind('tiling-enabled',
+                this as any, 'checked',
+                Gio.SettingsBindFlags.DEFAULT);
 
-        // Add a header to the menu
-        this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
+            // Add a header to the menu
+            this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
 
-        // Add settings menu item
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        const settingsItem = this.menu.addAction(_('Settings'),
-            () => this._extensionObject.openPreferences());
+            // Add settings menu item
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            const settingsItem = this.menu.addAction(_('Settings'),
+                () => this._extensionObject.openPreferences());
 
-        // Ensure settings are unavailable when screen is locked
-        settingsItem.visible = Main.sessionMode.allowSettings;
-        this.menu._settingsActions[extensionObject.uuid] = settingsItem;
-    }
-});
+            // Ensure settings are unavailable when screen is locked
+            settingsItem.visible = Main.sessionMode.allowSettings;
+            this.menu._settingsActions[extensionObject.uuid] = settingsItem;
+        }
+    });
 
 // ── SYSTEM INDICATOR ────────────────────────────────────────
 const SimpleTilingIndicator = GObject.registerClass(
-class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
-    private _tilingToggle?: any;
-    public declare quickSettingsItems: any[];
+    class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
+        private _tilingToggle?: any;
+        public declare quickSettingsItems: any[];
 
-    _init(extensionObject: Extension) {
-        super._init();
+        _init(extensionObject: Extension) {
+            super._init();
 
-        // Optional: Create an indicator icon (uncomment if desired)
-        // this._indicator = this._addIndicator();
-        // this._indicator.icon_name = 'view-grid-symbolic';
-        // this._indicator.visible = false; // Only show when needed
+            // Optional: Create an indicator icon (uncomment if desired)
+            // this._indicator = this._addIndicator();
+            // this._indicator.icon_name = 'view-grid-symbolic';
+            // this._indicator.visible = false; // Only show when needed
 
-        // Create the tiling toggle
-        this._tilingToggle = new TilingToggle(extensionObject);
-        
-        // Add the toggle to our items
-        this.quickSettingsItems.push(this._tilingToggle);
-    }
+            // Create the tiling toggle
+            this._tilingToggle = new TilingToggle(extensionObject);
 
-    destroy() {
-        this.quickSettingsItems.forEach(item => item.destroy());
-        super.destroy();
-    }
-});
+            // Add the toggle to our items
+            this.quickSettingsItems.push(this._tilingToggle);
+        }
+
+        destroy() {
+            this.quickSettingsItems.forEach(item => item.destroy());
+            super.destroy();
+        }
+    });
 
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
     public windows: Meta.Window[];
     public grabbedWindow: Meta.Window | null;
     public settings: Gio.Settings;
-    
+
     private _extension: Extension;
     private _signalIds: Map<string, SignalConnection>;
     private _tileInProgress: boolean;
@@ -341,26 +352,26 @@ class Tiler {
     private _centerTimeoutIds: number[];
     private _workspaceManager: any;
     constructor(extension: Extension) {
-        this._extension       = extension;
-        this.settings         = this._extension.getSettings();
+        this._extension = extension;
+        this.settings = this._extension.getSettings();
 
-        this.windows          = [];
-        this.grabbedWindow    = null;
-        this._signalIds       = new Map();
-        this._tileInProgress  = false;
+        this.windows = [];
+        this.grabbedWindow = null;
+        this._signalIds = new Map();
+        this._tileInProgress = false;
 
-        this._innerGap        = this.settings.get_int('inner-gap');
-        this._outerGapVertical= this.settings.get_int('outer-gap-vertical');
+        this._innerGap = this.settings.get_int('inner-gap');
+        this._outerGapVertical = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal = this.settings.get_int('outer-gap-horizontal');
 
-        this._tilingDelay     = TILING_DELAY_MS;
-        this._centeringDelay  = CENTERING_DELAY_MS;
+        this._tilingDelay = TILING_DELAY_MS;
+        this._centeringDelay = CENTERING_DELAY_MS;
 
-        this._exceptions      = [];
+        this._exceptions = [];
         this._interactionHandler = new InteractionHandler(this);
 
-        this._tileTimeoutId   = null;
-        this._centerTimeoutIds= [];
+        this._tileTimeoutId = null;
+        this._centerTimeoutIds = [];
     }
 
     enable(): void {
@@ -370,7 +381,7 @@ class Tiler {
         this._signalIds.set('workspace-changed', {
             object: this._workspaceManager,
             id: this._workspaceManager.connect('active-workspace-changed',
-                                               ()=>this._onActiveWorkspaceChanged())
+                () => this._onActiveWorkspaceChanged())
         });
 
         this._connectToWorkspace();
@@ -378,7 +389,7 @@ class Tiler {
 
         this._signalIds.set('settings-changed', {
             object: this.settings,
-            id: this.settings.connect('changed', ()=>this._onSettingsChanged())
+            id: this.settings.connect('changed', () => this._onSettingsChanged())
         });
     }
 
@@ -387,25 +398,25 @@ class Tiler {
             GLib.source_remove(this._tileTimeoutId);
             this._tileTimeoutId = null;
         }
-        this._centerTimeoutIds.forEach(id=>GLib.source_remove(id));
+        this._centerTimeoutIds.forEach(id => GLib.source_remove(id));
         this._centerTimeoutIds = [];
 
         this._interactionHandler.disable();
         this._disconnectFromWorkspace();
 
-        for (const [,sig] of this._signalIds) {
-            try { sig.object.disconnect(sig.id); } catch {}
+        for (const [, sig] of this._signalIds) {
+            try { sig.object.disconnect(sig.id); } catch { }
         }
         this._signalIds.clear();
         this.windows = [];
     }
 
     _onSettingsChanged(): void {
-        this._innerGap          = this.settings.get_int('inner-gap');
-        this._outerGapVertical  = this.settings.get_int('outer-gap-vertical');
-        this._outerGapHorizontal= this.settings.get_int('outer-gap-horizontal');
+        this._innerGap = this.settings.get_int('inner-gap');
+        this._outerGapVertical = this.settings.get_int('outer-gap-vertical');
+        this._outerGapHorizontal = this.settings.get_int('outer-gap-horizontal');
         this._loadExceptions(); // Reload exceptions when settings change
-        
+
         // If tiling was just re-enabled, tile all current windows
         if (this.settings.get_boolean('tiling-enabled')) {
             this.queueTile();
@@ -426,9 +437,9 @@ class Tiler {
             if (ok) {
                 const txt = new TextDecoder('utf-8').decode(data);
                 const fileExceptions = txt.split('\n')
-                                          .map(l => l.trim())
-                                          .filter(l => l && !l.startsWith('#'))
-                                          .map(l => l.toLowerCase());
+                    .map(l => l.trim())
+                    .filter(l => l && !l.startsWith('#'))
+                    .map(l => l.toLowerCase());
                 exceptions = exceptions.concat(fileExceptions);
             }
         }
@@ -445,7 +456,7 @@ class Tiler {
     }
 
     _hasMaximizedWindows(): boolean {
-        return this.windows.some(win => 
+        return this.windows.some(win =>
             win.get_maximized() && !win.minimized
         );
     }
@@ -468,9 +479,9 @@ class Tiler {
                 if (index > -1) this._centerTimeoutIds.splice(index, 1);
 
                 if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
-                
+
                 // Conditional unmaximize for exception windows based on setting
-                if (!this.settings.get_boolean('respect-maximized-windows') && 
+                if (!this.settings.get_boolean('respect-maximized-windows') &&
                     win.get_maximized()) {
                     win.unmaximize(Meta.MaximizeFlags.BOTH);
                 }
@@ -488,7 +499,7 @@ class Tiler {
                         true,
                         workArea.x + Math.floor((workArea.width - frame.width) / 2),
                         workArea.y +
-                            Math.floor((workArea.height - frame.height) / 2)
+                        Math.floor((workArea.height - frame.height) / 2)
                     );
                 }
 
@@ -513,7 +524,7 @@ class Tiler {
 
     _onWindowAdded(_workspace: any, win: Meta.Window): void {
         if (this.windows.includes(win)) return;
-        
+
         if (this._isException(win)) {
             // Only center exception windows when tiling is enabled
             if (this.settings.get_boolean('tiling-enabled')) {
@@ -565,7 +576,7 @@ class Tiler {
                 if (sig) {
                     try {
                         sig.object.disconnect(sig.id);
-                    } catch (e) {}
+                    } catch (e) { }
                     this._signalIds.delete(key);
                 }
             }
@@ -605,7 +616,7 @@ class Tiler {
             if (sig) {
                 try {
                     sig.object.disconnect(sig.id);
-                } catch (e) {}
+                } catch (e) { }
                 this._signalIds.delete(key);
             }
         });
@@ -614,13 +625,13 @@ class Tiler {
     queueTile(): void {
         if (this._tileInProgress || this._tileTimeoutId) return;
         if (!this.settings.get_boolean('tiling-enabled')) return;
-        
+
         // Check if we should respect maximized windows
-        if (this.settings.get_boolean('respect-maximized-windows') && 
+        if (this.settings.get_boolean('respect-maximized-windows') &&
             this._hasMaximizedWindows()) {
             return; // Skip tiling when maximized windows exist
         }
-        
+
         this._tileInProgress = true;
         this._tileTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
@@ -704,7 +715,7 @@ class Tiler {
             width: workArea.width - 2 * this._outerGapHorizontal,
             height: workArea.height - 2 * this._outerGapVertical,
         };
-        
+
         // Conditional unmaximize behavior based on setting
         if (!this.settings.get_boolean('respect-maximized-windows')) {
             // Current behavior: force unmaximize all windows
@@ -748,24 +759,24 @@ export default class SimpleTilingExtension extends Extension {
     private tiler?: Tiler;
     private _indicator?: any;
 
-    enable(): void { 
-        this.tiler = new Tiler(this); 
+    enable(): void {
+        this.tiler = new Tiler(this);
         this.tiler.enable();
-        
+
         // Create and add Quick Settings indicator
         this._indicator = new SimpleTilingIndicator(this);
         (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
     }
-    
-    disable(): void { 
+
+    disable(): void {
         if (this._indicator) {
             this._indicator.destroy();
             this._indicator = undefined;
         }
-        
+
         if (this.tiler) {
-            this.tiler.disable(); 
-            this.tiler = undefined; 
+            this.tiler.disable();
+            this.tiler = undefined;
         }
     }
 }

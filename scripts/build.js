@@ -73,23 +73,6 @@ async function build(config) {
     console.log(`✓ Extension built in ${config.buildDir}/`);
 }
 
-async function validate(config) {
-    console.log('Validating extension...');
-    
-    if (!commandExists('gnome-extensions')) {
-        console.log('⚠️  gnome-extensions command not found, skipping validation');
-        return;
-    }
-    
-    try {
-        execSync(`gnome-extensions validate ${config.buildDir}`, { stdio: 'pipe' });
-        console.log('✓ Extension validation passed');
-    } catch (err) {
-        console.log('⚠️  Extension validation failed');
-        console.log('Check the extension for issues');
-    }
-}
-
 // Main
 const command = process.argv[2];
 
@@ -106,15 +89,8 @@ try {
             await clean(config);
             break;
             
-        case 'validate':
-            await validate(config);
-            break;
-            
         default:
             await build(config);
-            if (commandExists('gnome-extensions')) {
-                await validate(config);
-            }
             break;
     }
 } catch (err) {
