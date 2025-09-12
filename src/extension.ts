@@ -350,7 +350,8 @@ class Tiler {
     private _interactionHandler: InteractionHandler;
     private _tileTimeoutId: number | null;
     private _centerTimeoutIds: number[];
-    private _workspaceManager: any;
+    private _workspaceManager: Meta.WorkspaceManager;
+    private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
     constructor(extension: Extension) {
         this._extension = extension;
         this.settings = this._extension.getSettings();
@@ -372,6 +373,7 @@ class Tiler {
 
         this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
+        this._workspaceFingerprints = new WeakMap();
     }
 
     enable(): void {
@@ -562,6 +564,8 @@ class Tiler {
             if (this.settings.get_boolean('tiling-enabled')) {
                 this.queueTile();
             }
+            // Update workspace fingerprint after adding window
+            this._updateCurrentWorkspaceFingerprint();
         }
     }
 
@@ -582,6 +586,22 @@ class Tiler {
             }
         });
         this.queueTile();
+        // Update workspace fingerprint after removing window
+        this._updateCurrentWorkspaceFingerprint();
+    }
+
+    _createWorkspaceFingerprint(windows: Meta.Window[]): string {
+        return windows
+            .map(win => win.get_id())
+            .sort((a, b) => a - b)
+            .join(',');
+    }
+
+    _updateCurrentWorkspaceFingerprint(): void {
+        const workspace = this._workspaceManager.get_active_workspace();
+        const tileableWindows = this.windows.filter(win => this._isTileable(win));
+        const currentFingerprint = this._createWorkspaceFingerprint(tileableWindows);
+        this._workspaceFingerprints.set(workspace, currentFingerprint);
     }
 
     _onActiveWorkspaceChanged(): void {
@@ -591,9 +611,22 @@ class Tiler {
 
     _connectToWorkspace(): void {
         const workspace = this._workspaceManager.get_active_workspace();
+        
+        // Get all tileable windows on this workspace
+        const tileableWindows = workspace
+            .list_windows()
+            .filter((win: Meta.Window) => this._isTileable(win));
+        
+        // Create fingerprint for current window state
+        const currentFingerprint = this._createWorkspaceFingerprint(tileableWindows);
+        const storedFingerprint = this._workspaceFingerprints.get(workspace);
+        
+        // Add all windows to tracking (both tileable and exceptions)
         workspace
             .list_windows()
             .forEach((win: Meta.Window) => this._onWindowAdded(workspace, win));
+            
+        // Connect workspace event handlers
         this._signalIds.set("window-added", {
             object: workspace,
             id: workspace.connect("window-added", (ws: any, win: Meta.Window) =>
@@ -606,7 +639,12 @@ class Tiler {
                 this._onWindowRemoved(ws, win)
             ),
         });
-        this.queueTile();
+        
+        // Only retile if the window list actually changed
+        if (storedFingerprint !== currentFingerprint) {
+            this._workspaceFingerprints.set(workspace, currentFingerprint);
+            this.queueTile();
+        }
     }
 
     _disconnectFromWorkspace(): void {
