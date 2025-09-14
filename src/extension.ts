@@ -24,6 +24,16 @@ const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
 const TILING_DELAY_MS = 20;   // Change Tiling Window Delay
 const CENTERING_DELAY_MS = 5;    // Change Centered Window Delay
 
+// D-Bus interface for communication with preferences
+const SimpleTilingIface = `
+<node>
+  <interface name="org.gnome.Shell.Extensions.SimpleTiling">
+    <method name="GetWindowList">
+      <arg type="s" direction="out" name="windows"/>
+    </method>
+  </interface>
+</node>`;
+
 const KEYBINDINGS: { [key: string]: (self: any) => void } = {
     'swap-primary-window': (self) => self._swapWithPrimary(),
     'swap-left-window': (self) => self._swapInDirection('left'),
@@ -426,28 +436,30 @@ class Tiler {
     }
 
     _loadExceptions(): void {
-        let exceptions: string[] = [];
-
-        // Load exceptions from settings
-        const settingsExceptions = this.settings.get_strv('window-exceptions');
-        exceptions = exceptions.concat(settingsExceptions);
-
-        // Load exceptions from file (for backward compatibility)
+        // Load exceptions from file only
         const file = Gio.File.new_for_path(this._extension.path + '/exceptions.txt');
         if (file.query_exists(null)) {
             const [ok, data] = file.load_contents(null);
             if (ok) {
                 const txt = new TextDecoder('utf-8').decode(data);
-                const fileExceptions = txt.split('\n')
+                this._exceptions = txt.split('\n')
                     .map(l => l.trim())
                     .filter(l => l && !l.startsWith('#'))
                     .map(l => l.toLowerCase());
-                exceptions = exceptions.concat(fileExceptions);
+                // Remove duplicates
+                this._exceptions = [...new Set(this._exceptions)];
+            } else {
+                this._exceptions = [];
             }
+        } else {
+            this._exceptions = [];
         }
+    }
 
-        // Remove duplicates and store
-        this._exceptions = [...new Set(exceptions)];
+    reloadExceptions(): void {
+        this._loadExceptions();
+        // Retile after reloading exceptions
+        this.queueTile();
     }
 
     _isException(win: Meta.Window): boolean {
@@ -524,7 +536,7 @@ class Tiler {
         this.queueTile();
     }
 
-    _onWindowAdded(_workspace: any, win: Meta.Window): void {
+    _onWindowAdded(_workspace: Meta.Workspace, win: Meta.Window): void {
         if (this.windows.includes(win)) return;
 
         if (this._isException(win)) {
@@ -569,7 +581,7 @@ class Tiler {
         }
     }
 
-    _onWindowRemoved(_workspace: any, win: Meta.Window): void {
+    _onWindowRemoved(_workspace: Meta.Workspace, win: Meta.Window): void {
         const index = this.windows.indexOf(win);
         if (index > -1) this.windows.splice(index, 1);
 
@@ -611,21 +623,21 @@ class Tiler {
 
     _connectToWorkspace(): void {
         const workspace = this._workspaceManager.get_active_workspace();
-        
+
         // Get all tileable windows on this workspace
         const tileableWindows = workspace
             .list_windows()
             .filter((win: Meta.Window) => this._isTileable(win));
-        
+
         // Create fingerprint for current window state
         const currentFingerprint = this._createWorkspaceFingerprint(tileableWindows);
         const storedFingerprint = this._workspaceFingerprints.get(workspace);
-        
+
         // Add all windows to tracking (both tileable and exceptions)
         workspace
             .list_windows()
             .forEach((win: Meta.Window) => this._onWindowAdded(workspace, win));
-            
+
         // Connect workspace event handlers
         this._signalIds.set("window-added", {
             object: workspace,
@@ -639,7 +651,7 @@ class Tiler {
                 this._onWindowRemoved(ws, win)
             ),
         });
-        
+
         // Only retile if the window list actually changed
         if (storedFingerprint !== currentFingerprint) {
             this._workspaceFingerprints.set(workspace, currentFingerprint);
@@ -796,6 +808,7 @@ class Tiler {
 export default class SimpleTilingExtension extends Extension {
     private tiler?: Tiler;
     private _indicator?: any;
+    private _dbus?: any;
 
     enable(): void {
         this.tiler = new Tiler(this);
@@ -804,9 +817,23 @@ export default class SimpleTilingExtension extends Extension {
         // Create and add Quick Settings indicator
         this._indicator = new SimpleTilingIndicator(this);
         (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
+
+        // Export D-Bus interface exactly like focused-window-dbus
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(SimpleTilingIface, this);
+        this._dbus.export(
+            Gio.DBus.session,
+            '/org/gnome/Shell/Extensions/SimpleTiling'
+        );
     }
 
     disable(): void {
+        // Unexport D-Bus interface
+        if (this._dbus) {
+            this._dbus.flush();
+            this._dbus.unexport();
+            delete this._dbus;
+        }
+
         if (this._indicator) {
             this._indicator.destroy();
             this._indicator = undefined;
@@ -815,6 +842,24 @@ export default class SimpleTilingExtension extends Extension {
         if (this.tiler) {
             this.tiler.disable();
             this.tiler = undefined;
+        }
+    }
+
+    // D-Bus method implementation
+    GetWindowList(): string {
+        try {
+            const workspace = global.workspace_manager.get_active_workspace();
+            const windows = workspace.list_windows()
+                .filter((w: Meta.Window) => w && w.get_window_type() === Meta.WindowType.NORMAL)
+                .map((w: Meta.Window) => ({
+                    title: w.get_title() || 'Unknown',
+                    wmClass: w.get_wm_class() || '',
+                    appId: w.get_gtk_application_id() || ''
+                }));
+            return JSON.stringify(windows);
+        } catch (e) {
+            console.error('SimpleTiling: Error getting window list:', e);
+            return '[]';
         }
     }
 }

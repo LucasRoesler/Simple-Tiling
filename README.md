@@ -193,6 +193,10 @@ You can change this behavior in the Simple Tiling settings panel within the GNOM
 
 If you have race condition issues between mutter (Gnome WM) and the Simple Tiling extension, you can adjust the window delay settings (both for tiling windows as well as for centered application from the exceptions list) directly in the extensions.js (~/.local/share/gnome-shell/extensions/simple-tiling@lucasroesler/extension.js). You will find the parameter at line 17 & 18. Defaults to "20" for General Tiling Window Delay and "5" for centered Apps on the Exception List.
 
+## References / Inspiration
+- https://github.com/flexagoon/focused-window-dbus for how to expose things over dbus
+- https://github.com/domferr/tilingshell/tree/main for some more advanced preferences UX
+
 ## Future Development
 
 This extension was built to solve a specific need. However, future enhancements could include:
