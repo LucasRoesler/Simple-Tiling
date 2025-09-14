@@ -500,32 +500,38 @@ class Tiler {
                     win.unmaximize(Meta.MaximizeFlags.BOTH);
                 }
 
-                const monitorIndex = win.get_monitor();
-                const workspace = this._workspaceManager.get_active_workspace();
-                const workArea = workspace.get_work_area_for_monitor(
-                    monitorIndex
-                );
-
-                // Only center if not maximized (or if we just unmaximized it)
-                if (!win.get_maximized()) {
-                    const frame = win.get_frame_rect();
-                    win.move_frame(
-                        true,
-                        workArea.x + Math.floor((workArea.width - frame.width) / 2),
-                        workArea.y +
-                        Math.floor((workArea.height - frame.height) / 2)
+                // Only center if the setting is enabled
+                if (this.settings.get_boolean('exceptions-always-center')) {
+                    const monitorIndex = win.get_monitor();
+                    const workspace = this._workspaceManager.get_active_workspace();
+                    const workArea = workspace.get_work_area_for_monitor(
+                        monitorIndex
                     );
+
+                    // Only center if not maximized (or if we just unmaximized it)
+                    if (!win.get_maximized()) {
+                        const frame = win.get_frame_rect();
+                        win.move_frame(
+                            true,
+                            workArea.x + Math.floor((workArea.width - frame.width) / 2),
+                            workArea.y +
+                            Math.floor((workArea.height - frame.height) / 2)
+                        );
+                    }
                 }
 
-                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    if (win.get_display()) {
-                        if (typeof (win as any).set_keep_above === "function")
-                            (win as any).set_keep_above(true);
-                        else if (typeof (win as any).make_above === "function")
-                            (win as any).make_above();
-                    }
-                    return GLib.SOURCE_REMOVE;
-                });
+                // Only make window on top if the setting is enabled
+                if (this.settings.get_boolean('exceptions-always-on-top')) {
+                    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                        if (win.get_display()) {
+                            if (typeof (win as any).set_keep_above === "function")
+                                (win as any).set_keep_above(true);
+                            else if (typeof (win as any).make_above === "function")
+                                (win as any).make_above();
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
                 return GLib.SOURCE_REMOVE;
             }
         );
@@ -540,8 +546,10 @@ class Tiler {
         if (this.windows.includes(win)) return;
 
         if (this._isException(win)) {
-            // Only center exception windows when tiling is enabled
-            if (this.settings.get_boolean('tiling-enabled')) {
+            // Only apply exception window settings when tiling is enabled and at least one setting is on
+            if (this.settings.get_boolean('tiling-enabled') &&
+                (this.settings.get_boolean('exceptions-always-center') ||
+                 this.settings.get_boolean('exceptions-always-on-top'))) {
                 this._centerWindow(win);
             }
             return;

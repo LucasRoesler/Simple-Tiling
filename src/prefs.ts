@@ -82,6 +82,34 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         rowRespectMaximized.set_activatable_widget(respectMaximizedSwitch);
         groupBehavior.add(rowRespectMaximized);
 
+        const rowExceptionsAlwaysCenter = new Adw.ActionRow({
+            title: 'Always Center Exception Windows',
+            subtitle: 'Automatically center non-tiled windows on their monitor'
+        });
+
+        const exceptionsCenterSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('exceptions-always-center', exceptionsCenterSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+
+        rowExceptionsAlwaysCenter.add_suffix(exceptionsCenterSwitch);
+        rowExceptionsAlwaysCenter.set_activatable_widget(exceptionsCenterSwitch);
+        groupBehavior.add(rowExceptionsAlwaysCenter);
+
+        const rowExceptionsAlwaysOnTop = new Adw.ActionRow({
+            title: 'Always On Top for Exception Windows',
+            subtitle: 'Keep non-tiled windows above tiled windows'
+        });
+
+        const exceptionsOnTopSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('exceptions-always-on-top', exceptionsOnTopSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+
+        rowExceptionsAlwaysOnTop.add_suffix(exceptionsOnTopSwitch);
+        rowExceptionsAlwaysOnTop.set_activatable_widget(exceptionsOnTopSwitch);
+        groupBehavior.add(rowExceptionsAlwaysOnTop);
+
         const rowNewWindow = new Adw.ComboRow({
             title: 'Open new windows as',
             subtitle: 'Whether a new window starts as Primary or Stack',

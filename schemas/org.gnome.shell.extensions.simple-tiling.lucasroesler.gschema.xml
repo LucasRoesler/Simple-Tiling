@@ -70,6 +70,18 @@
       <summary>Respect maximized windows</summary>
       <description>When enabled, skip tiling operations while any window is maximized. When disabled, force all windows to tile (current behavior).</description>
     </key>
-    
+
+    <key name="exceptions-always-center" type="b">
+      <default>false</default>
+      <summary>Always center exception windows</summary>
+      <description>When enabled, non-tiled (exception) windows will be automatically centered on their monitor when created.</description>
+    </key>
+
+    <key name="exceptions-always-on-top" type="b">
+      <default>false</default>
+      <summary>Always on top for exception windows</summary>
+      <description>When enabled, non-tiled (exception) windows will stay above tiled windows.</description>
+    </key>
+
   </schema>
 </schemalist>

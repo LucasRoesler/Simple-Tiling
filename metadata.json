@@ -2,8 +2,8 @@
   "uuid": "simple-tiling@lucasroesler",
   "name": "Simple Tiling",
   "description": "A Simple Tiling Extension for GNOME Shell with TypeScript support and maximized window handling. Fork of Domoel's Simple Tiling.",
-  "version": 13,
-  "version-name": "9.2.0",
+  "version": 14,
+  "version-name": "9.3.0",
   "shell-version": [
     "45",
     "46",
