@@ -31,6 +31,8 @@ const SimpleTilingIface = `
     <method name="GetWindowList">
       <arg type="s" direction="out" name="windows"/>
     </method>
+    <method name="ForceRetile">
+    </method>
   </interface>
 </node>`;
 
@@ -303,6 +305,22 @@ const TilingToggle = GObject.registerClass(
 
             // Add a header to the menu
             this.menu.setHeader('view-grid-symbolic', _('Simple Tiling'));
+
+            // Add force retiling action
+            this.menu.addAction(_('Force Retiling'),
+                () => {
+                    // Use D-Bus to trigger force retiling
+                    const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
+                        Gio.BusType.SESSION,
+                        Gio.DBusProxyFlags.NONE,
+                        null,
+                        'org.gnome.Shell',
+                        '/org/gnome/Shell/Extensions/SimpleTiling',
+                        'org.gnome.Shell.Extensions.SimpleTiling',
+                        null
+                    );
+                    dbusProxy.call_sync('ForceRetile', null, Gio.DBusCallFlags.NONE, -1, null);
+                });
 
             // Add settings menu item
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -822,6 +840,27 @@ class Tiler {
     _tileWindows(): void {
         const workspace = this._workspaceManager.get_active_workspace();
         const data = this._getWorkspaceData(workspace);
+
+        // Recheck for exceptions after delay - window properties may now be set
+        const windowsToRecheck = [...data.tiled];
+        for (const win of windowsToRecheck) {
+            if (this._isException(win)) {
+                // Move from tiled to exceptions
+                const index = data.tiled.indexOf(win);
+                if (index > -1) {
+                    data.tiled.splice(index, 1);
+                    data.exceptions.push(win);
+
+                    // Apply exception window settings if enabled
+                    if (this.settings.get_boolean('tiling-enabled') &&
+                        (this.settings.get_boolean('exceptions-always-center') ||
+                         this.settings.get_boolean('exceptions-always-on-top'))) {
+                        this._centerWindow(win);
+                    }
+                }
+            }
+        }
+
         const windowsToTile = data.tiled.filter((win) => !win.minimized);
         if (windowsToTile.length === 0) return;
 
@@ -875,7 +914,7 @@ class Tiler {
 
 // ── EXTENSION‑WRAPPER ───────────────────────────────────
 export default class SimpleTilingExtension extends Extension {
-    private tiler?: Tiler;
+    public tiler?: Tiler;
     private _indicator?: any;
     private _dbus?: any;
 
@@ -914,7 +953,7 @@ export default class SimpleTilingExtension extends Extension {
         }
     }
 
-    // D-Bus method implementation
+    // D-Bus method implementations
     GetWindowList(): string {
         try {
             const workspace = global.workspace_manager.get_active_workspace();
@@ -929,6 +968,12 @@ export default class SimpleTilingExtension extends Extension {
         } catch (e) {
             console.error('SimpleTiling: Error getting window list:', e);
             return '[]';
+        }
+    }
+
+    ForceRetile(): void {
+        if (this.tiler) {
+            this.tiler.tileNow();
         }
     }
 }
