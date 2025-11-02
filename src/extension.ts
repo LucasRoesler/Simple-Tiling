@@ -309,17 +309,37 @@ const TilingToggle = GObject.registerClass(
             // Add force retiling action
             this.menu.addAction(_('Force Retiling'),
                 () => {
-                    // Use D-Bus to trigger force retiling
-                    const dbusProxy = Gio.DBusProxy.new_for_bus_sync(
+                    // Use async D-Bus call to prevent blocking the main thread
+                    Gio.DBusProxy.new_for_bus(
                         Gio.BusType.SESSION,
                         Gio.DBusProxyFlags.NONE,
                         null,
                         'org.gnome.Shell',
                         '/org/gnome/Shell/Extensions/SimpleTiling',
                         'org.gnome.Shell.Extensions.SimpleTiling',
-                        null
+                        null,
+                        (proxy, error) => {
+                            if (error) {
+                                console.error('Failed to create D-Bus proxy:', error);
+                                return;
+                            }
+                            // Use async call to prevent freezing
+                            proxy.call(
+                                'ForceRetile',
+                                null,
+                                Gio.DBusCallFlags.NONE,
+                                -1,
+                                null,
+                                (proxy, result) => {
+                                    try {
+                                        proxy.call_finish(result);
+                                    } catch (e) {
+                                        console.error('Failed to call ForceRetile:', e);
+                                    }
+                                }
+                            );
+                        }
                     );
-                    dbusProxy.call_sync('ForceRetile', null, Gio.DBusCallFlags.NONE, -1, null);
                 });
 
             // Add settings menu item
