@@ -62,14 +62,10 @@ function getPointerXY(): [number, number] {
             return coords;
     }
 
-    const device = Clutter.get_default_backend()
-        .get_default_seat()
-        .get_pointer();
-    if (device) {
-        try {
-            return (device as any).get_position();
-        } catch { }
-    }
+    // TODO: Clutter 17 removed Seat.get_pointer(). The fallback to
+    // overlap-based window finding in _findTargetUnderPointer() works fine.
+    // If we need exact pointer position in future, check Clutter 17 docs
+    // for alternative APIs like get_pointer_sprite() or event-based methods.
     return [0, 0];
 }
 
@@ -555,7 +551,7 @@ class Tiler {
         const workspace = this._workspaceManager.get_active_workspace();
         const data = this._getWorkspaceData(workspace);
         return data.tiled.some(win =>
-            win.get_maximized() && !win.minimized
+            win.is_maximized() && !win.minimized
         );
     }
 
@@ -580,8 +576,8 @@ class Tiler {
 
                 // Conditional unmaximize for exception windows based on setting
                 if (!this.settings.get_boolean('respect-maximized-windows') &&
-                    win.get_maximized()) {
-                    win.unmaximize(Meta.MaximizeFlags.BOTH);
+                    win.is_maximized()) {
+                    win.unmaximize();
                 }
 
                 // Only center if the setting is enabled
@@ -593,7 +589,7 @@ class Tiler {
                     );
 
                     // Only center if not maximized (or if we just unmaximized it)
-                    if (!win.get_maximized()) {
+                    if (!win.is_maximized()) {
                         const frame = win.get_frame_rect();
                         win.move_frame(
                             true,
@@ -898,7 +894,7 @@ class Tiler {
         if (!this.settings.get_boolean('respect-maximized-windows')) {
             // Current behavior: force unmaximize all windows
             windowsToTile.forEach((win) => {
-                if (win.get_maximized()) win.unmaximize(Meta.MaximizeFlags.BOTH);
+                if (win.is_maximized()) win.unmaximize();
             });
         }
         // If respecting maximized windows, don't force unmaximize
