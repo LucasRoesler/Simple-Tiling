@@ -435,6 +435,7 @@ class Tiler {
     private _windowReadyTimers: Map<number, number>;
     private _windowWorkspaceSignals: Map<number, { win: Meta.Window; signalId: number }>;
     private _windowPrevWorkspace: WeakMap<Meta.Window, number>;
+    private _windowOperationTimestamps: Map<number, number>;
     private _workspaceManager: Meta.WorkspaceManager;
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
     private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
@@ -463,6 +464,7 @@ class Tiler {
         this._windowReadyTimers = new Map();
         this._windowWorkspaceSignals = new Map();
         this._windowPrevWorkspace = new WeakMap();
+        this._windowOperationTimestamps = new Map();
         this._workspaceWindows = new WeakMap();
         this._workspaceFingerprints = new WeakMap();
     }
@@ -546,6 +548,9 @@ class Tiler {
             }
         }
         this._windowWorkspaceSignals.clear();
+
+        // Clear operation timestamps
+        this._windowOperationTimestamps.clear();
 
         this._interactionHandler.disable();
 
@@ -635,6 +640,37 @@ class Tiler {
         return hasGeometry && hasWmClass && hasCompositor;
     }
 
+    /**
+     * Check if a window operation should be skipped due to recent processing.
+     * Prevents infinite loops when windows trigger rapid successive events.
+     * @param windowId The window ID to check
+     * @param cooldownMs Cooldown period in milliseconds (default 1000ms)
+     * @returns true if operation should be skipped
+     */
+    _shouldSkipOperation(windowId: number, cooldownMs = 1000): boolean {
+        const lastTimestamp = this._windowOperationTimestamps.get(windowId);
+        if (lastTimestamp && (Date.now() - lastTimestamp) < cooldownMs) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Record that an operation was performed on a window.
+     * @param windowId The window ID that was processed
+     */
+    _recordOperation(windowId: number): void {
+        this._windowOperationTimestamps.set(windowId, Date.now());
+    }
+
+    /**
+     * Clear operation timestamp for a window (e.g., when window is removed).
+     * @param windowId The window ID to clear
+     */
+    _clearOperationTimestamp(windowId: number): void {
+        this._windowOperationTimestamps.delete(windowId);
+    }
+
     _connectWindowWorkspaceSignal(win: Meta.Window, initialWorkspace: Meta.Workspace): void {
         const windowId = win.get_id();
 
@@ -674,6 +710,7 @@ class Tiler {
     _onWindowWorkspaceChanged(win: Meta.Window): void {
         if (!win || !win.get_display()) return;
 
+        const windowId = win.get_id();
         const newWorkspace = win.get_workspace();
         if (!newWorkspace) return;  // Window being destroyed
 
@@ -682,6 +719,12 @@ class Tiler {
 
         // Skip if workspace hasn't actually changed
         if (prevWorkspaceIndex === newWorkspaceIndex) return;
+
+        // Skip if this window was recently processed (prevents rapid event loops)
+        if (this._shouldSkipOperation(windowId, 500)) {
+            this._logger.debug(`Skipping workspace change for window ${windowId} - recently processed`);
+            return;
+        }
 
         const winTitle = win.get_title() || '(untitled)';
         this._logger.debug(`Window "${winTitle}" moved from workspace ${prevWorkspaceIndex} to ${newWorkspaceIndex}`);
@@ -716,6 +759,9 @@ class Tiler {
 
         // Update stored workspace index
         this._windowPrevWorkspace.set(win, newWorkspaceIndex);
+
+        // Record this operation to prevent rapid re-processing
+        this._recordOperation(windowId);
 
         // Queue retiling for the active workspace
         this.queueTile();
@@ -974,6 +1020,9 @@ class Tiler {
 
             // Disconnect per-window workspace-changed signal
             this._disconnectWindowWorkspaceSignal(win);
+
+            // Clear operation timestamp
+            this._clearOperationTimestamp(windowId);
         }
 
         this.queueTile();
