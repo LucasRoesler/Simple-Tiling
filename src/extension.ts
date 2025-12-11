@@ -593,8 +593,12 @@ class Tiler {
         return (
             win &&
             !win.minimized &&
-            !this._isException(win) &&
-            win.get_window_type() === Meta.WindowType.NORMAL
+            win.get_window_type() === Meta.WindowType.NORMAL &&
+            !win.is_on_all_workspaces() &&
+            !win.is_attached_dialog() &&
+            win.get_transient_for() === null &&
+            !win.skip_taskbar &&
+            !this._isException(win)  // Most expensive check last
         );
     }
 
