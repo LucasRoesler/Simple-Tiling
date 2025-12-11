@@ -433,6 +433,8 @@ class Tiler {
     private _tileTimeoutId: number | null;
     private _centerTimeoutIds: number[];
     private _windowReadyTimers: Map<number, number>;
+    private _windowWorkspaceSignals: Map<number, { win: Meta.Window; signalId: number }>;
+    private _windowPrevWorkspace: WeakMap<Meta.Window, number>;
     private _workspaceManager: Meta.WorkspaceManager;
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
     private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
@@ -459,6 +461,8 @@ class Tiler {
         this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
         this._windowReadyTimers = new Map();
+        this._windowWorkspaceSignals = new Map();
+        this._windowPrevWorkspace = new WeakMap();
         this._workspaceWindows = new WeakMap();
         this._workspaceFingerprints = new WeakMap();
     }
@@ -530,6 +534,18 @@ class Tiler {
             GLib.source_remove(timerId);
         }
         this._windowReadyTimers.clear();
+
+        // Clean up per-window workspace-changed signals
+        for (const [, data] of this._windowWorkspaceSignals.entries()) {
+            try {
+                if (data.win && data.win.get_display()) {
+                    data.win.disconnect(data.signalId);
+                }
+            } catch (e) {
+                // Window already destroyed, signal auto-disconnected
+            }
+        }
+        this._windowWorkspaceSignals.clear();
 
         this._interactionHandler.disable();
 
@@ -617,6 +633,92 @@ class Tiler {
         const hasWmClass = win.get_wm_class() !== null && win.get_wm_class() !== '';
         const hasCompositor = win.get_compositor_private() !== null;
         return hasGeometry && hasWmClass && hasCompositor;
+    }
+
+    _connectWindowWorkspaceSignal(win: Meta.Window, initialWorkspace: Meta.Workspace): void {
+        const windowId = win.get_id();
+
+        // Don't connect if already connected
+        if (this._windowWorkspaceSignals.has(windowId)) return;
+
+        // Store initial workspace index in WeakMap for change detection
+        this._windowPrevWorkspace.set(win, initialWorkspace.index());
+
+        const signalId = win.connect('workspace-changed', () => {
+            this._onWindowWorkspaceChanged(win);
+        });
+
+        this._windowWorkspaceSignals.set(windowId, { win, signalId });
+        this._logger.debug(`Connected workspace-changed signal for window ${windowId}`);
+    }
+
+    _disconnectWindowWorkspaceSignal(win: Meta.Window): void {
+        const windowId = win.get_id();
+        const data = this._windowWorkspaceSignals.get(windowId);
+
+        if (data) {
+            try {
+                if (data.win && data.win.get_display()) {
+                    data.win.disconnect(data.signalId);
+                }
+            } catch (e) {
+                // Window already destroyed, signal auto-disconnected
+            }
+            this._windowWorkspaceSignals.delete(windowId);
+            this._logger.debug(`Disconnected workspace-changed signal for window ${windowId}`);
+        }
+
+        // WeakMap auto-cleans when window is garbage collected
+    }
+
+    _onWindowWorkspaceChanged(win: Meta.Window): void {
+        if (!win || !win.get_display()) return;
+
+        const newWorkspace = win.get_workspace();
+        if (!newWorkspace) return;  // Window being destroyed
+
+        const prevWorkspaceIndex = this._windowPrevWorkspace.get(win);
+        const newWorkspaceIndex = newWorkspace.index();
+
+        // Skip if workspace hasn't actually changed
+        if (prevWorkspaceIndex === newWorkspaceIndex) return;
+
+        const winTitle = win.get_title() || '(untitled)';
+        this._logger.debug(`Window "${winTitle}" moved from workspace ${prevWorkspaceIndex} to ${newWorkspaceIndex}`);
+
+        // Remove from previous workspace tracking
+        if (prevWorkspaceIndex !== undefined && prevWorkspaceIndex >= 0) {
+            const prevWorkspace = this._workspaceManager.get_workspace_by_index(prevWorkspaceIndex);
+            if (prevWorkspace) {
+                const prevData = this._getWorkspaceData(prevWorkspace);
+                const tiledIndex = prevData.tiled.indexOf(win);
+                if (tiledIndex > -1) {
+                    prevData.tiled.splice(tiledIndex, 1);
+                    this._logger.debug(`Removed from workspace ${prevWorkspaceIndex} tiled list`);
+                }
+                const exceptionsIndex = prevData.exceptions.indexOf(win);
+                if (exceptionsIndex > -1) {
+                    prevData.exceptions.splice(exceptionsIndex, 1);
+                }
+            }
+        }
+
+        // Add to new workspace tracking (if not already tracked)
+        const newData = this._getWorkspaceData(newWorkspace);
+        if (!newData.tiled.includes(win) && !newData.exceptions.includes(win)) {
+            if (this._isException(win)) {
+                newData.exceptions.push(win);
+            } else if (this._isTileable(win)) {
+                newData.tiled.push(win);
+                this._logger.debug(`Added to workspace ${newWorkspaceIndex} tiled list`);
+            }
+        }
+
+        // Update stored workspace index
+        this._windowPrevWorkspace.set(win, newWorkspaceIndex);
+
+        // Queue retiling for the active workspace
+        this.queueTile();
     }
 
     _waitForWindowReady(
@@ -791,7 +893,7 @@ class Tiler {
                 this._signalIds.set(`unmanaged-${id}`, {
                     object: win,
                     id: win.connect("unmanaged", () =>
-                        this._onWindowRemoved(workspace, win)
+                        this._onWindowRemoved(null, win)  // Pass null to indicate destruction
                     ),
                 });
                 this._signalIds.set(`size-changed-${id}`, {
@@ -806,6 +908,9 @@ class Tiler {
                         this._onWindowMinimizedStateChanged()
                     ),
                 });
+
+                // Connect per-window workspace-changed signal
+                this._connectWindowWorkspaceSignal(win, workspace);
             }
 
             // Only queue tiling if tiling is enabled
@@ -866,6 +971,9 @@ class Tiler {
                     }
                 }
             });
+
+            // Disconnect per-window workspace-changed signal
+            this._disconnectWindowWorkspaceSignal(win);
         }
 
         this.queueTile();
