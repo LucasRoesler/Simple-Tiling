@@ -83,5 +83,11 @@
       <description>When enabled, non-tiled (exception) windows will stay above tiled windows.</description>
     </key>
 
+    <key name="debug-logging" type="b">
+      <default>false</default>
+      <summary>Enable debug logging</summary>
+      <description>When enabled, extension logs detailed information to GNOME Shell journal for troubleshooting. View logs with: journalctl -f -o cat /usr/bin/gnome-shell</description>
+    </key>
+
   </schema>
 </schemalist>

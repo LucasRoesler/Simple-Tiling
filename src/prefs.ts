@@ -110,6 +110,20 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         rowExceptionsAlwaysOnTop.set_activatable_widget(exceptionsOnTopSwitch);
         groupBehavior.add(rowExceptionsAlwaysOnTop);
 
+        const rowDebugLogging = new Adw.ActionRow({
+            title: 'Enable Debug Logging',
+            subtitle: 'Log detailed information to GNOME Shell journal (view with: journalctl -f -o cat /usr/bin/gnome-shell)'
+        });
+
+        const debugLoggingSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER
+        });
+        settings.bind('debug-logging', debugLoggingSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
+
+        rowDebugLogging.add_suffix(debugLoggingSwitch);
+        rowDebugLogging.set_activatable_widget(debugLoggingSwitch);
+        groupBehavior.add(rowDebugLogging);
+
         const rowNewWindow = new Adw.ComboRow({
             title: 'Open new windows as',
             subtitle: 'Whether a new window starts as Primary or Stack',

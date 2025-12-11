@@ -48,6 +48,38 @@ const KEYBINDINGS: { [key: string]: (self: any) => void } = {
     'focus-down': (self) => self._focusInDirection('down'),
 };
 
+// ── LOGGER ────────────────────────────────────────────────
+class Logger {
+    private settings: Gio.Settings;
+
+    constructor(settings: Gio.Settings) {
+        this.settings = settings;
+    }
+
+    private _isEnabled(): boolean {
+        return this.settings.get_boolean('debug-logging');
+    }
+
+    private _log(level: string, message: string): void {
+        if (!this._isEnabled()) return;
+        const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+        const output = `[SimpleTiling ${timestamp}] ${level}: ${message}`;
+        console.log(output);
+    }
+
+    debug(message: string): void {
+        this._log('DEBUG', message);
+    }
+
+    info(message: string): void {
+        this._log('INFO', message);
+    }
+
+    error(message: string): void {
+        this._log('ERROR', message);
+    }
+}
+
 // ── HELPER‑FUNCTION ────────────────────────────────────────
 function getPointerXY(): [number, number] {
     if (global.get_pointer) {
@@ -388,6 +420,7 @@ class Tiler {
     public settings: Gio.Settings;
 
     private _extension: Extension;
+    private _logger: Logger;
     private _signalIds: Map<string, SignalConnection>;
     private _tileInProgress: boolean;
     private _innerGap: number;
@@ -406,6 +439,7 @@ class Tiler {
     constructor(extension: Extension) {
         this._extension = extension;
         this.settings = this._extension.getSettings();
+        this._logger = new Logger(this.settings);
 
         this.grabbedWindow = null;
         this._signalIds = new Map();
@@ -630,9 +664,15 @@ class Tiler {
         // Check if already tracked in this workspace
         if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
 
+        const winTitle = win.get_title() || '(untitled)';
+        const wmClass = win.get_wm_class() || '(unknown)';
+        const wsIndex = workspace.index();
+        const monitorIndex = win.get_monitor();
+
         if (this._isException(win)) {
             // Add to exceptions list for this workspace
             data.exceptions.push(win);
+            this._logger.debug(`Window added (exception): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}`);
 
             // Only apply exception window settings when tiling is enabled and at least one setting is on
             if (this.settings.get_boolean('tiling-enabled') &&
@@ -650,6 +690,7 @@ class Tiler {
             } else {
                 data.tiled.push(win);
             }
+            this._logger.debug(`Window added (tiled): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}, total tiled=${data.tiled.length}`);
 
             const id = win.get_id();
             // Only connect signals if not already connected
@@ -684,18 +725,28 @@ class Tiler {
     }
 
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
+        const winTitle = win.get_title() || '(untitled)';
+        const wmClass = win.get_wm_class() || '(unknown)';
+        const wsIndex = workspace?.index() ?? -1;
+
         // Remove from the specific workspace if provided, otherwise from all workspaces
         if (workspace) {
             const data = this._getWorkspaceData(workspace);
             const tiledIndex = data.tiled.indexOf(win);
-            if (tiledIndex > -1) data.tiled.splice(tiledIndex, 1);
+            const wasInTiled = tiledIndex > -1;
+            if (wasInTiled) data.tiled.splice(tiledIndex, 1);
 
             const exceptionsIndex = data.exceptions.indexOf(win);
-            if (exceptionsIndex > -1) data.exceptions.splice(exceptionsIndex, 1);
+            const wasInExceptions = exceptionsIndex > -1;
+            if (wasInExceptions) data.exceptions.splice(exceptionsIndex, 1);
+
+            const windowType = wasInTiled ? 'tiled' : (wasInExceptions ? 'exception' : 'unknown');
+            this._logger.debug(`Window removed (${windowType}): "${winTitle}" [${wmClass}] ws=${wsIndex}, remaining tiled=${data.tiled.length}`);
         } else {
             // Window is being destroyed, remove from all workspaces
             // Since we're using WeakMap, we can't iterate over all workspaces
             // But the window signals will be disconnected below
+            this._logger.debug(`Window destroyed: "${winTitle}" [${wmClass}]`);
         }
 
         // Clean up signals only if window is being destroyed (workspace is null)
@@ -735,6 +786,10 @@ class Tiler {
 
     _onActiveWorkspaceChanged(): void {
         // Just queue a retile for the new workspace, no disconnection needed
+        const workspace = this._workspaceManager.get_active_workspace();
+        const wsIndex = workspace?.index() ?? -1;
+        const data = workspace ? this._getWorkspaceData(workspace) : null;
+        this._logger.debug(`Active workspace changed to workspace ${wsIndex} with ${data?.tiled.length ?? 0} tiled windows`);
         this.queueTile();
     }
 
@@ -745,6 +800,9 @@ class Tiler {
 
         // Get workspace data
         const data = this._getWorkspaceData(workspace);
+        const wsIndex = workspace.index();
+        const windowCount = workspace.list_windows().length;
+        this._logger.debug(`Connecting to workspace ${wsIndex} with ${windowCount} existing windows`);
 
         // Add existing windows to tracking if not already tracked
         workspace.list_windows().forEach((win: Meta.Window) => {
@@ -775,15 +833,23 @@ class Tiler {
     }
 
     queueTile(): void {
-        if (this._tileInProgress || this._tileTimeoutId) return;
-        if (!this.settings.get_boolean('tiling-enabled')) return;
+        if (this._tileInProgress || this._tileTimeoutId) {
+            this._logger.debug('Tiling already in progress or queued, skipping');
+            return;
+        }
+        if (!this.settings.get_boolean('tiling-enabled')) {
+            this._logger.debug('Tiling disabled, skipping queue');
+            return;
+        }
 
         // Check if we should respect maximized windows
         if (this.settings.get_boolean('respect-maximized-windows') &&
             this._hasMaximizedWindows()) {
+            this._logger.debug('Maximized windows detected, skipping tiling');
             return; // Skip tiling when maximized windows exist
         }
 
+        this._logger.debug(`Tiling queued, will execute in ${this._tilingDelay}ms`);
         this._tileInProgress = true;
         this._tileTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
@@ -856,6 +922,9 @@ class Tiler {
     _tileWindows(): void {
         const workspace = this._workspaceManager.get_active_workspace();
         const data = this._getWorkspaceData(workspace);
+        const wsIndex = workspace.index();
+
+        this._logger.debug(`_tileWindows() executing for workspace ${wsIndex}`);
 
         // Recheck for exceptions after delay - window properties may now be set
         const windowsToRecheck = [...data.tiled];
@@ -866,6 +935,7 @@ class Tiler {
                 if (index > -1) {
                     data.tiled.splice(index, 1);
                     data.exceptions.push(win);
+                    this._logger.debug(`Rechecked window "${win.get_title()}" is now an exception, moved to exceptions list`);
 
                     // Apply exception window settings if enabled
                     if (this.settings.get_boolean('tiling-enabled') &&
@@ -878,10 +948,21 @@ class Tiler {
         }
 
         const windowsToTile = data.tiled.filter((win) => !win.minimized);
-        if (windowsToTile.length === 0) return;
+        if (windowsToTile.length === 0) {
+            this._logger.debug(`No windows to tile on workspace ${wsIndex}`);
+            return;
+        }
 
         const monitor = Main.layoutManager.primaryMonitor;
         const workArea = workspace.get_work_area_for_monitor(monitor.index);
+
+        // Log monitor and window details for multi-monitor diagnostics
+        this._logger.debug(`Tiling ${windowsToTile.length} windows on workspace ${wsIndex}`);
+        this._logger.debug(`  Using primary monitor index ${monitor.index}, work area: x=${workArea.x} y=${workArea.y} w=${workArea.width} h=${workArea.height}`);
+        windowsToTile.forEach((win, idx) => {
+            const winMonitor = win.get_monitor();
+            this._logger.debug(`    [${idx}] "${win.get_title()}" is on monitor ${winMonitor}`);
+        });
 
         const innerArea = {
             x: workArea.x + this._outerGapHorizontal,
