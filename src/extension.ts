@@ -432,6 +432,7 @@ class Tiler {
     private _interactionHandler: InteractionHandler;
     private _tileTimeoutId: number | null;
     private _centerTimeoutIds: number[];
+    private _windowReadyTimers: Map<number, number>;
     private _workspaceManager: Meta.WorkspaceManager;
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
     private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
@@ -457,6 +458,7 @@ class Tiler {
 
         this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
+        this._windowReadyTimers = new Map();
         this._workspaceWindows = new WeakMap();
         this._workspaceFingerprints = new WeakMap();
     }
@@ -522,6 +524,12 @@ class Tiler {
         }
         this._centerTimeoutIds.forEach(id => GLib.source_remove(id));
         this._centerTimeoutIds = [];
+
+        // Clean up any pending window ready timers
+        for (const timerId of this._windowReadyTimers.values()) {
+            GLib.source_remove(timerId);
+        }
+        this._windowReadyTimers.clear();
 
         this._interactionHandler.disable();
 
@@ -602,6 +610,72 @@ class Tiler {
         );
     }
 
+    _isWindowReady(win: Meta.Window): boolean {
+        if (!win || !win.get_display()) return false;
+        const frame = win.get_frame_rect();
+        const hasGeometry = frame.width > 0 && frame.height > 0;
+        const hasWmClass = win.get_wm_class() !== null && win.get_wm_class() !== '';
+        const hasCompositor = win.get_compositor_private() !== null;
+        return hasGeometry && hasWmClass && hasCompositor;
+    }
+
+    _waitForWindowReady(
+        win: Meta.Window,
+        workspace: Meta.Workspace,
+        callback: () => void,
+        maxAttempts = 20
+    ): void {
+        const windowId = win.get_id();
+        const pollInterval = 50; // ms
+
+        // Cancel any existing timer for this window
+        if (this._windowReadyTimers.has(windowId)) {
+            const existingTimerId = this._windowReadyTimers.get(windowId);
+            if (existingTimerId) {
+                GLib.source_remove(existingTimerId);
+            }
+            this._windowReadyTimers.delete(windowId);
+        }
+
+        // If already ready, call immediately
+        if (this._isWindowReady(win)) {
+            callback();
+            return;
+        }
+
+        let attempts = 0;
+
+        const check = (): boolean => {
+            attempts++;
+
+            // Window was destroyed while waiting - clean up and exit
+            if (!win || !win.get_display()) {
+                this._logger.debug(`Window ${windowId} destroyed while waiting for geometry`);
+                this._windowReadyTimers.delete(windowId);
+                return GLib.SOURCE_REMOVE;
+            }
+
+            if (this._isWindowReady(win)) {
+                this._logger.debug(`Window ready after ${attempts} attempts: "${win.get_title()}"`);
+                this._windowReadyTimers.delete(windowId);
+                callback();
+                return GLib.SOURCE_REMOVE;
+            }
+
+            if (attempts >= maxAttempts) {
+                this._logger.debug(`Window geometry timeout after ${attempts} attempts: "${win.get_title()}" - skipping`);
+                this._windowReadyTimers.delete(windowId);
+                // Don't proceed on timeout - window may not be ready for tiling
+                return GLib.SOURCE_REMOVE;
+            }
+
+            return GLib.SOURCE_CONTINUE;
+        };
+
+        const timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, pollInterval, check);
+        this._windowReadyTimers.set(windowId, timerId);
+    }
+
     _centerWindow(win: Meta.Window): void {
         const timeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
@@ -668,6 +742,21 @@ class Tiler {
         // Check if already tracked in this workspace
         if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
 
+        // Wait for window geometry to be ready before processing
+        this._waitForWindowReady(win, workspace, () => {
+            this._processNewWindow(workspace, win);
+        });
+    }
+
+    _processNewWindow(workspace: Meta.Workspace, win: Meta.Window): void {
+        // Window may have been destroyed while waiting
+        if (!win || !win.get_display()) return;
+
+        const data = this._getWorkspaceData(workspace);
+
+        // Re-check if already tracked (might have been added while waiting)
+        if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
+
         const winTitle = win.get_title() || '(untitled)';
         const wmClass = win.get_wm_class() || '(unknown)';
         const wsIndex = workspace.index();
@@ -729,9 +818,19 @@ class Tiler {
     }
 
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
+        const windowId = win.get_id();
         const winTitle = win.get_title() || '(untitled)';
         const wmClass = win.get_wm_class() || '(unknown)';
         const wsIndex = workspace?.index() ?? -1;
+
+        // Cancel any pending geometry wait timer for this window
+        if (this._windowReadyTimers.has(windowId)) {
+            const timerId = this._windowReadyTimers.get(windowId);
+            if (timerId) {
+                GLib.source_remove(timerId);
+            }
+            this._windowReadyTimers.delete(windowId);
+        }
 
         // Remove from the specific workspace if provided, otherwise from all workspaces
         if (workspace) {
