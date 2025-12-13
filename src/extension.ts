@@ -614,6 +614,7 @@ class Tiler {
         const workspace = this._workspaceManager.get_active_workspace();
         const data = this._getWorkspaceData(workspace);
         return data.tiled.some(win =>
+            win && typeof win.is_maximized === 'function' &&
             win.is_maximized() && !win.minimized
         );
     }
