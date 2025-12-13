@@ -2,7 +2,7 @@
 
 ## Task Tracking
 
-This project uses `bd` (beads) for issue tracking. Quick reference:
+This project uses `bd` (beads) for local issue tracking in **stealth mode** (no sync needed).
 
 ```bash
 bd create "Issue title"          # Create issue
@@ -14,6 +14,8 @@ bd dep add <id1> <id2>           # id2 blocks id1
 bd update <id> --status in_progress
 bd close <id>
 ```
+
+Note: Do not run `bd sync` - beads is configured for local-only tracking.
 
 ## Build & Test
 
