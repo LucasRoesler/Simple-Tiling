@@ -28,3 +28,6 @@ Thumbs.db
 
 # Temp folder for analysis
 temp/
+
+# Dev environment for nested shell testing
+.dev-data/
