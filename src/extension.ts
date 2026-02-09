@@ -569,6 +569,14 @@ class Tiler {
     }
 
     /**
+     * Check if a window is still valid (not destroyed).
+     * Use this before any window operations to prevent crashes from stale references.
+     */
+    _isWindowValid(win: Meta.Window | null | undefined): win is Meta.Window {
+        return win !== null && win !== undefined && win.get_display() !== null;
+    }
+
+    /**
      * Check if a window operation should be skipped due to recent processing.
      * Prevents infinite loops when windows trigger rapid successive events.
      * @param windowId The window ID to check
@@ -1072,8 +1080,13 @@ class Tiler {
         // Recheck for exceptions after delay - window properties may now be set
         const windowsToRecheck = [...data.tiled];
         for (const win of windowsToRecheck) {
-            // Skip destroyed windows
-            if (!win || !win.get_display() || win.get_monitor() < 0) continue;
+            // Skip if window was destroyed while we were processing
+            if (!this._isWindowValid(win)) {
+                this._logger.debug(`Skipping stale window reference during exception recheck`);
+                this._workspaceTracker.removeWindow(workspace, win);
+                continue;
+            }
+
             if (this._isException(win)) {
                 // Move from tiled to exceptions
                 this._workspaceTracker.removeWindow(workspace, win);
@@ -1118,6 +1131,7 @@ class Tiler {
         this._logger.debug(`Tiling ${windowsToTile.length} windows on workspace ${wsIndex}`);
         this._logger.debug(`  Using primary monitor index ${monitor.index}, work area: x=${workArea.x} y=${workArea.y} w=${workArea.width} h=${workArea.height}`);
         windowsToTile.forEach((win, idx) => {
+            if (!this._isWindowValid(win)) return;
             const winMonitor = win.get_monitor();
             this._logger.debug(`    [${idx}] "${win.get_title()}" is on monitor ${winMonitor}`);
         });
@@ -1133,6 +1147,7 @@ class Tiler {
         if (!this.settings.get_boolean('respect-maximized-windows')) {
             // Current behavior: force unmaximize all windows
             windowsToTile.forEach((win) => {
+                if (!this._isWindowValid(win)) return;
                 if (win.is_maximized()) win.unmaximize();
             });
         }
