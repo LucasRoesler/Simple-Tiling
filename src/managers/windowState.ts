@@ -8,14 +8,40 @@
 // This avoids polluting native objects with custom properties
 import Meta from 'gi://Meta';
 
-const windowStates = new WeakMap<Meta.Window, Record<string, any>>();
+/**
+ * Type-safe window state properties.
+ * Add new properties here with proper types.
+ */
+export interface WindowStateData {
+    /** Signal ID for workspace-changed signal */
+    workspaceSignalId?: number;
+    /** Previous workspace index for change detection */
+    prevWorkspaceIndex?: number;
+    /** Registry ID for window ready timer */
+    readyTimerId?: number;
+}
 
-export function get(window: Meta.Window, property: string): any {
+/**
+ * Property keys that can be stored in window state.
+ * This provides compile-time checking for property names.
+ */
+export type WindowStateProperty = keyof WindowStateData;
+
+const windowStates = new WeakMap<Meta.Window, WindowStateData>();
+
+export function get<K extends WindowStateProperty>(
+    window: Meta.Window,
+    property: K
+): WindowStateData[K] | undefined {
     const state = windowStates.get(window);
     return state ? state[property] : undefined;
 }
 
-export function set(window: Meta.Window, property: string, value: any): void {
+export function set<K extends WindowStateProperty>(
+    window: Meta.Window,
+    property: K,
+    value: NonNullable<WindowStateData[K]>
+): void {
     let state = windowStates.get(window);
     if (!state) {
         state = {};
@@ -24,19 +50,25 @@ export function set(window: Meta.Window, property: string, value: any): void {
     state[property] = value;
 }
 
-export function has(window: Meta.Window, property: string): boolean {
+export function has<K extends WindowStateProperty>(
+    window: Meta.Window,
+    property: K
+): boolean {
     const state = windowStates.get(window);
     return state ? property in state : false;
 }
 
-export function remove(window: Meta.Window, property: string): void {
+export function remove<K extends WindowStateProperty>(
+    window: Meta.Window,
+    property: K
+): void {
     const state = windowStates.get(window);
     if (state) {
         delete state[property];
     }
 }
 
-export function getState(window: Meta.Window): Record<string, any> | undefined {
+export function getState(window: Meta.Window): WindowStateData | undefined {
     return windowStates.get(window);
 }
 
