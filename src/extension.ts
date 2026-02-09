@@ -21,6 +21,7 @@ import Shell from 'gi://Shell';
 import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import * as WindowState from './managers/windowState.js';
+import { WorkspaceTracker, type WorkspaceData } from './managers/workspaceTracker.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
@@ -380,12 +381,6 @@ const SimpleTilingIndicator = GObject.registerClass(
         }
     });
 
-// ── TYPE DEFINITIONS FOR WORKSPACE DATA ────────────────────
-interface WorkspaceData {
-    tiled: Meta.Window[];
-    exceptions: Meta.Window[];
-}
-
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
     public grabbedWindow: Meta.Window | null;
@@ -394,6 +389,7 @@ class Tiler {
     private _extension: Extension;
     private _logger: Logger;
     private _timeoutRegistry: TimeoutRegistry;
+    private _workspaceTracker: WorkspaceTracker;
     private _signalIds: Map<string, SignalConnection>;
     private _tileInProgress: boolean;
     private _innerGap: number;
@@ -407,14 +403,13 @@ class Tiler {
     private _centerTimeoutIds: number[];
     private _windowOperationTimestamps: Map<number, number>;
     private _workspaceManager: Meta.WorkspaceManager;
-    private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
-    private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
 
     constructor(extension: Extension) {
         this._extension = extension;
         this.settings = this._extension.getSettings();
         this._logger = new Logger(this.settings);
         this._timeoutRegistry = new TimeoutRegistry(this._logger);
+        this._workspaceTracker = new WorkspaceTracker(this._logger);
 
         this.grabbedWindow = null;
         this._signalIds = new Map();
@@ -433,41 +428,41 @@ class Tiler {
         this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
         this._windowOperationTimestamps = new Map();
-        this._workspaceWindows = new WeakMap();
-        this._workspaceFingerprints = new WeakMap();
     }
 
     // Getter for backwards compatibility with InteractionHandler
     get windows(): Meta.Window[] {
-        const workspace = this._workspaceManager?.get_active_workspace();
-        if (!workspace) return [];
-        return this._getWorkspaceData(workspace).tiled;
-    }
-
-    private _getWorkspaceData(workspace: Meta.Workspace): WorkspaceData {
-        let data = this._workspaceWindows.get(workspace);
-        if (!data) {
-            data = { tiled: [], exceptions: [] };
-            this._workspaceWindows.set(workspace, data);
-        }
-        return data;
+        const data = this._workspaceTracker.getActiveWorkspaceData();
+        return data ? data.tiled : [];
     }
 
     enable(): void {
         this._loadExceptions();
         this._workspaceManager = global.workspace_manager;
 
+        // Enable workspace tracker
+        this._workspaceTracker.enable(this._workspaceManager);
+
+        // Connect to workspace changed signal
         this._signalIds.set('workspace-changed', {
             object: this._workspaceManager,
             id: this._workspaceManager.connect('active-workspace-changed',
                 () => this._onActiveWorkspaceChanged())
         });
 
-        // Connect to all existing workspaces
+        // Connect to all existing workspaces via WorkspaceTracker
+        this._workspaceTracker.connectToAllWorkspaces({
+            onWindowAdded: (ws, win) => this._onWindowAdded(ws, win),
+            onWindowRemoved: (ws, win) => this._onWindowRemoved(ws, win)
+        });
+
+        // Add existing windows to tracking
         for (let i = 0; i < this._workspaceManager.get_n_workspaces(); i++) {
             const workspace = this._workspaceManager.get_workspace_by_index(i);
             if (workspace) {
-                this._connectToWorkspace(workspace);
+                workspace.list_windows().forEach((win: Meta.Window) => {
+                    this._onWindowAdded(workspace, win);
+                });
             }
         }
 
@@ -478,7 +473,10 @@ class Tiler {
                 (_: any, index: number) => {
                     const workspace = this._workspaceManager.get_workspace_by_index(index);
                     if (workspace) {
-                        this._connectToWorkspace(workspace);
+                        this._workspaceTracker.connectToWorkspace(workspace, {
+                            onWindowAdded: (ws, win) => this._onWindowAdded(ws, win),
+                            onWindowRemoved: (ws, win) => this._onWindowRemoved(ws, win)
+                        });
                     }
                 })
         });
@@ -510,8 +508,8 @@ class Tiler {
         }
         this._signalIds.clear();
 
-        // Clear all workspace data (WeakMap will be garbage collected)
-        this._workspaceWindows = new WeakMap();
+        // Disable workspace tracker (cleans up workspace signals and data)
+        this._workspaceTracker.disable();
     }
 
     _onSettingsChanged(): void {
@@ -540,8 +538,8 @@ class Tiler {
     }
 
     _hasMaximizedWindows(): boolean {
-        const workspace = this._workspaceManager.get_active_workspace();
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getActiveWorkspaceData();
+        if (!data) return false;
         return data.tiled.some(win =>
             win && typeof win.is_maximized === 'function' &&
             win.is_maximized() && !win.minimized
@@ -665,26 +663,18 @@ class Tiler {
         if (prevWorkspaceIndex !== undefined && prevWorkspaceIndex >= 0) {
             const prevWorkspace = this._workspaceManager.get_workspace_by_index(prevWorkspaceIndex);
             if (prevWorkspace) {
-                const prevData = this._getWorkspaceData(prevWorkspace);
-                const tiledIndex = prevData.tiled.indexOf(win);
-                if (tiledIndex > -1) {
-                    prevData.tiled.splice(tiledIndex, 1);
-                    this._logger.debug(`Removed from workspace ${prevWorkspaceIndex} tiled list`);
-                }
-                const exceptionsIndex = prevData.exceptions.indexOf(win);
-                if (exceptionsIndex > -1) {
-                    prevData.exceptions.splice(exceptionsIndex, 1);
-                }
+                this._workspaceTracker.removeWindow(prevWorkspace, win);
+                this._logger.debug(`Removed from workspace ${prevWorkspaceIndex}`);
             }
         }
 
         // Add to new workspace tracking (if not already tracked)
-        const newData = this._getWorkspaceData(newWorkspace);
+        const newData = this._workspaceTracker.getWorkspaceData(newWorkspace);
         if (!newData.tiled.includes(win) && !newData.exceptions.includes(win)) {
             if (this._isException(win)) {
-                newData.exceptions.push(win);
+                this._workspaceTracker.addWindow(newWorkspace, win, true);
             } else if (this._isTileable(win)) {
-                newData.tiled.push(win);
+                this._workspaceTracker.addWindow(newWorkspace, win, false);
                 this._logger.debug(`Added to workspace ${newWorkspaceIndex} tiled list`);
             }
         }
@@ -818,7 +808,7 @@ class Tiler {
     _onWindowAdded(workspace: Meta.Workspace, win: Meta.Window): void {
         if (!workspace) return;
 
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getWorkspaceData(workspace);
 
         // Check if already tracked in this workspace
         if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
@@ -833,7 +823,7 @@ class Tiler {
         // Window may have been destroyed while waiting
         if (!win || !win.get_display()) return;
 
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getWorkspaceData(workspace);
 
         // Re-check if already tracked (might have been added while waiting)
         if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
@@ -845,7 +835,7 @@ class Tiler {
 
         if (this._isException(win)) {
             // Add to exceptions list for this workspace
-            data.exceptions.push(win);
+            this._workspaceTracker.addWindow(workspace, win, true);
             this._logger.debug(`Window added (exception): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}`);
 
             // Only apply exception window settings when tiling is enabled and at least one setting is on
@@ -859,11 +849,18 @@ class Tiler {
 
         if (this._isTileable(win)) {
             // Add to tiled list for this workspace
+            this._workspaceTracker.addWindow(workspace, win, false);
+
+            // Reorder if needed based on new-window-behavior setting
             if (this.settings.get_string("new-window-behavior") === "primary") {
-                data.tiled.unshift(win);
-            } else {
-                data.tiled.push(win);
+                // Move newly added window to front
+                const index = data.tiled.indexOf(win);
+                if (index > 0) {
+                    data.tiled.splice(index, 1);
+                    data.tiled.unshift(win);
+                }
             }
+
             this._logger.debug(`Window added (tiled): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}, total tiled=${data.tiled.length}`);
 
             const id = win.get_id();
@@ -897,7 +894,7 @@ class Tiler {
                 this.queueTile();
             }
             // Update workspace fingerprint after adding window
-            this._updateCurrentWorkspaceFingerprint();
+            this._workspaceTracker.updateFingerprint(workspace);
         }
     }
 
@@ -914,16 +911,13 @@ class Tiler {
             WindowState.remove(win, 'readyTimerId');
         }
 
-        // Remove from the specific workspace if provided, otherwise from all workspaces
+        // Remove from the specific workspace if provided
         if (workspace) {
-            const data = this._getWorkspaceData(workspace);
-            const tiledIndex = data.tiled.indexOf(win);
-            const wasInTiled = tiledIndex > -1;
-            if (wasInTiled) data.tiled.splice(tiledIndex, 1);
+            const data = this._workspaceTracker.getWorkspaceData(workspace);
+            const wasInTiled = data.tiled.includes(win);
+            const wasInExceptions = data.exceptions.includes(win);
 
-            const exceptionsIndex = data.exceptions.indexOf(win);
-            const wasInExceptions = exceptionsIndex > -1;
-            if (wasInExceptions) data.exceptions.splice(exceptionsIndex, 1);
+            this._workspaceTracker.removeWindow(workspace, win);
 
             const windowType = wasInTiled ? 'tiled' : (wasInExceptions ? 'exception' : 'unknown');
             this._logger.debug(`Window removed (${windowType}): "${winTitle}" [${wmClass}] ws=${wsIndex}, remaining tiled=${data.tiled.length}`);
@@ -958,70 +952,20 @@ class Tiler {
 
         this.queueTile();
         // Update workspace fingerprint after removing window
-        this._updateCurrentWorkspaceFingerprint();
-    }
-
-    _createWorkspaceFingerprint(windows: Meta.Window[]): string {
-        return windows
-            .map(win => win.get_id())
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    _updateCurrentWorkspaceFingerprint(): void {
-        const workspace = this._workspaceManager.get_active_workspace();
-        const data = this._getWorkspaceData(workspace);
-        const currentFingerprint = this._createWorkspaceFingerprint(data.tiled);
-        this._workspaceFingerprints.set(workspace, currentFingerprint);
+        if (workspace) {
+            this._workspaceTracker.updateFingerprint(workspace);
+        }
     }
 
     _onActiveWorkspaceChanged(): void {
         // Just queue a retile for the new workspace, no disconnection needed
         const workspace = this._workspaceManager.get_active_workspace();
         const wsIndex = workspace?.index() ?? -1;
-        const data = workspace ? this._getWorkspaceData(workspace) : null;
+        const data = workspace ? this._workspaceTracker.getWorkspaceData(workspace) : null;
         this._logger.debug(`Active workspace changed to workspace ${wsIndex} with ${data?.tiled.length ?? 0} tiled windows`);
         this.queueTile();
     }
 
-    _connectToWorkspace(workspace: Meta.Workspace): void {
-        // Skip if already connected to this workspace
-        const key = `window-added-${workspace.index()}`;
-        if (this._signalIds.has(key)) return;
-
-        // Get workspace data
-        const data = this._getWorkspaceData(workspace);
-        const wsIndex = workspace.index();
-        const windowCount = workspace.list_windows().length;
-        this._logger.debug(`Connecting to workspace ${wsIndex} with ${windowCount} existing windows`);
-
-        // Add existing windows to tracking if not already tracked
-        workspace.list_windows().forEach((win: Meta.Window) => {
-            // Check if window is already tracked
-            if (!data.tiled.includes(win) && !data.exceptions.includes(win)) {
-                this._onWindowAdded(workspace, win);
-            }
-        });
-
-        // Connect workspace event handlers
-        this._signalIds.set(`window-added-${workspace.index()}`, {
-            object: workspace,
-            id: workspace.connect("window-added", (ws: any, win: Meta.Window) =>
-                this._onWindowAdded(ws, win)
-            ),
-        });
-        this._signalIds.set(`window-removed-${workspace.index()}`, {
-            object: workspace,
-            id: workspace.connect("window-removed", (ws: any, win: Meta.Window) =>
-                this._onWindowRemoved(ws, win)
-            ),
-        });
-    }
-
-    _disconnectFromWorkspace(): void {
-        // This method is no longer needed but kept for compatibility
-        // Actual cleanup happens in disable()
-    }
 
     queueTile(): void {
         if (this._tileInProgress || this._tileTimeoutId) {
@@ -1112,7 +1056,7 @@ class Tiler {
 
     _tileWindows(): void {
         const workspace = this._workspaceManager.get_active_workspace();
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getWorkspaceData(workspace);
         const wsIndex = workspace.index();
 
         this._logger.debug(`_tileWindows() executing for workspace ${wsIndex}`);
@@ -1124,18 +1068,15 @@ class Tiler {
             if (!win || !win.get_display() || win.get_monitor() < 0) continue;
             if (this._isException(win)) {
                 // Move from tiled to exceptions
-                const index = data.tiled.indexOf(win);
-                if (index > -1) {
-                    data.tiled.splice(index, 1);
-                    data.exceptions.push(win);
-                    this._logger.debug(`Rechecked window "${win.get_title()}" is now an exception, moved to exceptions list`);
+                this._workspaceTracker.removeWindow(workspace, win);
+                this._workspaceTracker.addWindow(workspace, win, true);
+                this._logger.debug(`Rechecked window "${win.get_title()}" is now an exception, moved to exceptions list`);
 
-                    // Apply exception window settings if enabled
-                    if (this.settings.get_boolean('tiling-enabled') &&
-                        (this.settings.get_boolean('exceptions-always-center') ||
-                         this.settings.get_boolean('exceptions-always-on-top'))) {
-                        this._centerWindow(win);
-                    }
+                // Apply exception window settings if enabled
+                if (this.settings.get_boolean('tiling-enabled') &&
+                    (this.settings.get_boolean('exceptions-always-center') ||
+                     this.settings.get_boolean('exceptions-always-on-top'))) {
+                    this._centerWindow(win);
                 }
             }
         }
