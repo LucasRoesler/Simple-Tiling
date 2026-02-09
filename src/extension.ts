@@ -18,6 +18,9 @@ import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 
+import { Logger } from './utils/logger.js';
+import { TimeoutRegistry } from './managers/timeoutRegistry.js';
+
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
 
@@ -47,38 +50,6 @@ const KEYBINDINGS: { [key: string]: (self: any) => void } = {
     'focus-up': (self) => self._focusInDirection('up'),
     'focus-down': (self) => self._focusInDirection('down'),
 };
-
-// ── LOGGER ────────────────────────────────────────────────
-class Logger {
-    private settings: Gio.Settings;
-
-    constructor(settings: Gio.Settings) {
-        this.settings = settings;
-    }
-
-    private _isEnabled(): boolean {
-        return this.settings.get_boolean('debug-logging');
-    }
-
-    private _log(level: string, message: string): void {
-        if (!this._isEnabled()) return;
-        const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
-        const output = `[SimpleTiling ${timestamp}] ${level}: ${message}`;
-        console.log(output);
-    }
-
-    debug(message: string): void {
-        this._log('DEBUG', message);
-    }
-
-    info(message: string): void {
-        this._log('INFO', message);
-    }
-
-    error(message: string): void {
-        this._log('ERROR', message);
-    }
-}
 
 // ── HELPER‑FUNCTION ────────────────────────────────────────
 function getPointerXY(): [number, number] {
@@ -421,6 +392,7 @@ class Tiler {
 
     private _extension: Extension;
     private _logger: Logger;
+    private _timeoutRegistry: TimeoutRegistry;
     private _signalIds: Map<string, SignalConnection>;
     private _tileInProgress: boolean;
     private _innerGap: number;
@@ -444,6 +416,7 @@ class Tiler {
         this._extension = extension;
         this.settings = this._extension.getSettings();
         this._logger = new Logger(this.settings);
+        this._timeoutRegistry = new TimeoutRegistry(this._logger);
 
         this.grabbedWindow = null;
         this._signalIds = new Map();
@@ -524,17 +497,14 @@ class Tiler {
     }
 
     disable(): void {
+        // Clean up all timeouts managed by TimeoutRegistry
+        this._timeoutRegistry.clearAll();
+
+        // Legacy cleanup (will be removed in Phase 2)
         if (this._tileTimeoutId) {
-            GLib.source_remove(this._tileTimeoutId);
             this._tileTimeoutId = null;
         }
-        this._centerTimeoutIds.forEach(id => GLib.source_remove(id));
         this._centerTimeoutIds = [];
-
-        // Clean up any pending window ready timers
-        for (const timerId of this._windowReadyTimers.values()) {
-            GLib.source_remove(timerId);
-        }
         this._windowReadyTimers.clear();
 
         // Clean up per-window workspace-changed signals
@@ -758,9 +728,9 @@ class Tiler {
 
         // Cancel any existing timer for this window
         if (this._windowReadyTimers.has(windowId)) {
-            const existingTimerId = this._windowReadyTimers.get(windowId);
-            if (existingTimerId) {
-                GLib.source_remove(existingTimerId);
+            const existingRegistryId = this._windowReadyTimers.get(windowId);
+            if (existingRegistryId) {
+                this._timeoutRegistry.remove(existingRegistryId);
             }
             this._windowReadyTimers.delete(windowId);
         }
@@ -797,19 +767,21 @@ class Tiler {
                 return GLib.SOURCE_REMOVE;
             }
 
-            return GLib.SOURCE_CONTINUE;
+            // Need to reschedule for next check
+            const newRegistryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
+            this._windowReadyTimers.set(windowId, newRegistryId);
+            return GLib.SOURCE_REMOVE;
         };
 
-        const timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, pollInterval, check);
-        this._windowReadyTimers.set(windowId, timerId);
+        const registryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
+        this._windowReadyTimers.set(windowId, registryId);
     }
 
     _centerWindow(win: Meta.Window): void {
-        const timeoutId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT,
+        const registryId = this._timeoutRegistry.add(
             this._centeringDelay,
             () => {
-                const index = this._centerTimeoutIds.indexOf(timeoutId);
+                const index = this._centerTimeoutIds.indexOf(registryId);
                 if (index > -1) this._centerTimeoutIds.splice(index, 1);
 
                 if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
@@ -853,9 +825,10 @@ class Tiler {
                     });
                 }
                 return GLib.SOURCE_REMOVE;
-            }
+            },
+            'center-window'
         );
-        this._centerTimeoutIds.push(timeoutId);
+        this._centerTimeoutIds.push(registryId);
     }
 
     _onWindowMinimizedStateChanged(): void {
@@ -1091,15 +1064,15 @@ class Tiler {
 
         this._logger.debug(`Tiling queued, will execute in ${this._tilingDelay}ms`);
         this._tileInProgress = true;
-        this._tileTimeoutId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT,
+        this._tileTimeoutId = this._timeoutRegistry.add(
             this._tilingDelay,
             () => {
                 this._tileWindows();
                 this._tileInProgress = false;
                 this._tileTimeoutId = null;
                 return GLib.SOURCE_REMOVE;
-            }
+            },
+            'tiling-queue'
         );
     }
 
