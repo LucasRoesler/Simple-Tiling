@@ -20,6 +20,7 @@ import Shell from 'gi://Shell';
 
 import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
+import * as WindowState from './managers/windowState.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
@@ -404,9 +405,6 @@ class Tiler {
     private _interactionHandler: InteractionHandler;
     private _tileTimeoutId: number | null;
     private _centerTimeoutIds: number[];
-    private _windowReadyTimers: Map<number, number>;
-    private _windowWorkspaceSignals: Map<number, { win: Meta.Window; signalId: number }>;
-    private _windowPrevWorkspace: WeakMap<Meta.Window, number>;
     private _windowOperationTimestamps: Map<number, number>;
     private _workspaceManager: Meta.WorkspaceManager;
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
@@ -434,9 +432,6 @@ class Tiler {
 
         this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
-        this._windowReadyTimers = new Map();
-        this._windowWorkspaceSignals = new Map();
-        this._windowPrevWorkspace = new WeakMap();
         this._windowOperationTimestamps = new Map();
         this._workspaceWindows = new WeakMap();
         this._workspaceFingerprints = new WeakMap();
@@ -500,24 +495,9 @@ class Tiler {
         // Clean up all timeouts managed by TimeoutRegistry
         this._timeoutRegistry.clearAll();
 
-        // Legacy cleanup (will be removed in Phase 2)
-        if (this._tileTimeoutId) {
-            this._tileTimeoutId = null;
-        }
+        // Reset state
+        this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
-        this._windowReadyTimers.clear();
-
-        // Clean up per-window workspace-changed signals
-        for (const [, data] of this._windowWorkspaceSignals.entries()) {
-            try {
-                if (data.win && data.win.get_display()) {
-                    data.win.disconnect(data.signalId);
-                }
-            } catch (e) {
-                // Window already destroyed, signal auto-disconnected
-            }
-        }
-        this._windowWorkspaceSignals.clear();
 
         // Clear operation timestamps
         this._windowOperationTimestamps.clear();
@@ -625,36 +605,38 @@ class Tiler {
         const windowId = win.get_id();
 
         // Don't connect if already connected
-        if (this._windowWorkspaceSignals.has(windowId)) return;
+        if (WindowState.has(win, 'workspaceSignalId')) return;
 
-        // Store initial workspace index in WeakMap for change detection
-        this._windowPrevWorkspace.set(win, initialWorkspace.index());
+        // Store initial workspace index in WindowState for change detection
+        WindowState.set(win, 'prevWorkspaceIndex', initialWorkspace.index());
 
         const signalId = win.connect('workspace-changed', () => {
             this._onWindowWorkspaceChanged(win);
         });
 
-        this._windowWorkspaceSignals.set(windowId, { win, signalId });
+        WindowState.set(win, 'workspaceSignalId', signalId);
         this._logger.debug(`Connected workspace-changed signal for window ${windowId}`);
     }
 
     _disconnectWindowWorkspaceSignal(win: Meta.Window): void {
         const windowId = win.get_id();
-        const data = this._windowWorkspaceSignals.get(windowId);
+        const signalId = WindowState.get(win, 'workspaceSignalId');
 
-        if (data) {
+        if (signalId !== undefined) {
             try {
-                if (data.win && data.win.get_display()) {
-                    data.win.disconnect(data.signalId);
+                if (win && win.get_display()) {
+                    win.disconnect(signalId);
                 }
+                this._logger.debug(`Disconnected workspace-changed signal for window ${windowId}`);
             } catch (e) {
                 // Window already destroyed, signal auto-disconnected
+                this._logger.debug(`Window ${windowId} signal already disconnected (window destroyed)`);
             }
-            this._windowWorkspaceSignals.delete(windowId);
-            this._logger.debug(`Disconnected workspace-changed signal for window ${windowId}`);
+            WindowState.remove(win, 'workspaceSignalId');
         }
 
         // WeakMap auto-cleans when window is garbage collected
+        WindowState.remove(win, 'prevWorkspaceIndex');
     }
 
     _onWindowWorkspaceChanged(win: Meta.Window): void {
@@ -664,7 +646,7 @@ class Tiler {
         const newWorkspace = win.get_workspace();
         if (!newWorkspace) return;  // Window being destroyed
 
-        const prevWorkspaceIndex = this._windowPrevWorkspace.get(win);
+        const prevWorkspaceIndex = WindowState.get(win, 'prevWorkspaceIndex');
         const newWorkspaceIndex = newWorkspace.index();
 
         // Skip if workspace hasn't actually changed
@@ -708,7 +690,7 @@ class Tiler {
         }
 
         // Update stored workspace index
-        this._windowPrevWorkspace.set(win, newWorkspaceIndex);
+        WindowState.set(win, 'prevWorkspaceIndex', newWorkspaceIndex);
 
         // Record this operation to prevent rapid re-processing
         this._recordOperation(windowId);
@@ -727,12 +709,10 @@ class Tiler {
         const pollInterval = 50; // ms
 
         // Cancel any existing timer for this window
-        if (this._windowReadyTimers.has(windowId)) {
-            const existingRegistryId = this._windowReadyTimers.get(windowId);
-            if (existingRegistryId) {
-                this._timeoutRegistry.remove(existingRegistryId);
-            }
-            this._windowReadyTimers.delete(windowId);
+        const existingRegistryId = WindowState.get(win, 'readyTimerId');
+        if (existingRegistryId !== undefined) {
+            this._timeoutRegistry.remove(existingRegistryId);
+            WindowState.remove(win, 'readyTimerId');
         }
 
         // If already ready, call immediately
@@ -749,32 +729,32 @@ class Tiler {
             // Window was destroyed while waiting - clean up and exit
             if (!win || !win.get_display()) {
                 this._logger.debug(`Window ${windowId} destroyed while waiting for geometry`);
-                this._windowReadyTimers.delete(windowId);
+                WindowState.remove(win, 'readyTimerId');
                 return GLib.SOURCE_REMOVE;
             }
 
             if (this._isWindowReady(win)) {
                 this._logger.debug(`Window ready after ${attempts} attempts: "${win.get_title()}"`);
-                this._windowReadyTimers.delete(windowId);
+                WindowState.remove(win, 'readyTimerId');
                 callback();
                 return GLib.SOURCE_REMOVE;
             }
 
             if (attempts >= maxAttempts) {
                 this._logger.debug(`Window geometry timeout after ${attempts} attempts: "${win.get_title()}" - skipping`);
-                this._windowReadyTimers.delete(windowId);
+                WindowState.remove(win, 'readyTimerId');
                 // Don't proceed on timeout - window may not be ready for tiling
                 return GLib.SOURCE_REMOVE;
             }
 
             // Need to reschedule for next check
             const newRegistryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
-            this._windowReadyTimers.set(windowId, newRegistryId);
+            WindowState.set(win, 'readyTimerId', newRegistryId);
             return GLib.SOURCE_REMOVE;
         };
 
         const registryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
-        this._windowReadyTimers.set(windowId, registryId);
+        WindowState.set(win, 'readyTimerId', registryId);
     }
 
     _centerWindow(win: Meta.Window): void {
@@ -928,12 +908,10 @@ class Tiler {
         const wsIndex = workspace?.index() ?? -1;
 
         // Cancel any pending geometry wait timer for this window
-        if (this._windowReadyTimers.has(windowId)) {
-            const timerId = this._windowReadyTimers.get(windowId);
-            if (timerId) {
-                GLib.source_remove(timerId);
-            }
-            this._windowReadyTimers.delete(windowId);
+        const readyTimerId = WindowState.get(win, 'readyTimerId');
+        if (readyTimerId !== undefined) {
+            this._timeoutRegistry.remove(readyTimerId);
+            WindowState.remove(win, 'readyTimerId');
         }
 
         // Remove from the specific workspace if provided, otherwise from all workspaces
