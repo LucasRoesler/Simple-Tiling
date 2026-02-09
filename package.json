@@ -30,7 +30,8 @@
     "postversion": "node scripts/version.js update-metadata",
     "// Development - Use dev for active development with auto-recompilation": "",
     "dev": "npm run watch",
-    "lint": "echo 'No linter configured yet'",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
     "// Convenience shortcuts - Use quick for rapid testing during development": "",
     "quick": "npm run build && npm run install:ext",
     "all": "npm run build",
@@ -48,6 +49,9 @@
     "@girs/meta-17": "latest",
     "@girs/shell-17": "latest",
     "@girs/st-17": "latest",
+    "@typescript-eslint/eslint-plugin": "^8.55.0",
+    "@typescript-eslint/parser": "^8.55.0",
+    "eslint": "^9.39.2",
     "typescript": "^5.3.3"
   }
 }

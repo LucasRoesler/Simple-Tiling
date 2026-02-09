@@ -21,7 +21,7 @@ import Shell from 'gi://Shell';
 import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import * as WindowState from './managers/windowState.js';
-import { WorkspaceTracker, type WorkspaceData } from './managers/workspaceTracker.js';
+import { WorkspaceTracker } from './managers/workspaceTracker.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
@@ -126,8 +126,12 @@ class InteractionHandler {
 
     disable(): void {
         if (this._wmKeysToDisable.length)
-            this._wmKeysToDisable.forEach(k =>
-                this._wmSettings.set_value(k, this._savedWmShortcuts[k]));
+            this._wmKeysToDisable.forEach(k => {
+                const savedValue = this._savedWmShortcuts[k];
+                if (savedValue) {
+                    this._wmSettings.set_value(k, savedValue);
+                }
+            });
 
         this._unbindAllShortcuts();
 
@@ -198,8 +202,15 @@ class InteractionHandler {
         const foc = global.display.get_focus_window();
         if (!foc || !w.includes(foc)) return;
         const idx = w.indexOf(foc);
-        if (idx > 0) [w[0], w[idx]] = [w[idx], w[0]];
-        else[w[0], w[1]] = [w[1], w[0]];
+        const w0 = w[0];
+        const wIdx = w[idx];
+        const w1 = w[1];
+        if (!w0 || !w1 || !wIdx) return;
+        if (idx > 0) {
+            [w[0], w[idx]] = [wIdx, w0];
+        } else {
+            [w[0], w[1]] = [w1, w0];
+        }
         this.tiler.tileNow();
         w[0]?.activate(global.get_current_time());
     }
@@ -209,14 +220,18 @@ class InteractionHandler {
         if (!src || !this.tiler.windows.includes(src)) return;
         let tgt = null;
         const idx = this.tiler.windows.indexOf(src);
-        if (idx === 0 && direction === 'right' && this.tiler.windows.length > 1)
+        if (idx === 0 && direction === 'right' && this.tiler.windows.length > 1) {
             tgt = this.tiler.windows[1];
-        else
+        } else {
             tgt = this._findTargetInDirection(src, direction);
+        }
         if (!tgt) return;
         const tidx = this.tiler.windows.indexOf(tgt);
+        const winIdx = this.tiler.windows[idx];
+        const winTidx = this.tiler.windows[tidx];
+        if (!winIdx || !winTidx) return;
         [this.tiler.windows[idx], this.tiler.windows[tidx]] =
-            [this.tiler.windows[tidx], this.tiler.windows[idx]];
+            [winTidx, winIdx];
         this.tiler.tileNow();
         src.activate(global.get_current_time());
     }
@@ -250,8 +265,12 @@ class InteractionHandler {
         if (tgt) {
             const a = this.tiler.windows.indexOf(grabbed);
             const b = this.tiler.windows.indexOf(tgt);
-            [this.tiler.windows[a], this.tiler.windows[b]] =
-                [this.tiler.windows[b], this.tiler.windows[a]];
+            const winA = this.tiler.windows[a];
+            const winB = this.tiler.windows[b];
+            if (winA && winB) {
+                [this.tiler.windows[a], this.tiler.windows[b]] =
+                    [winB, winA];
+            }
         }
         this.tiler.queueTile();
         this.tiler.grabbedWindow = null;
@@ -261,15 +280,20 @@ class InteractionHandler {
         const [x, y] = getPointerXY();
         const wins = global.get_window_actors()
             .map(a => a.meta_window)
-            .filter(w => w && w !== exclude &&
+            .filter((w): w is Meta.Window => w !== null && w !== undefined && w !== exclude &&
                 this.tiler.windows.includes(w) && (() => {
                     const f = w.get_frame_rect();
                     return x >= f.x && x < f.x + f.width &&
                         y >= f.y && y < f.y + f.height;
                 })());
-        if (wins.length) return wins[wins.length - 1];
+        if (wins.length) {
+            const lastWin = wins[wins.length - 1];
+            return lastWin ?? null;
+        }
 
-        let best = null, max = 0, sRect = exclude.get_frame_rect();
+        let best: Meta.Window | null = null;
+        let max = 0;
+        const sRect = exclude.get_frame_rect();
         for (const w of this.tiler.windows) {
             if (w === exclude) continue;
             const r = w.get_frame_rect();
@@ -325,20 +349,24 @@ const TilingToggle = GObject.registerClass(
                                 return;
                             }
                             // Use async call to prevent freezing
-                            proxy.call(
-                                'ForceRetile',
-                                null,
-                                Gio.DBusCallFlags.NONE,
-                                -1,
-                                null,
-                                (proxy, result) => {
-                                    try {
-                                        proxy.call_finish(result);
-                                    } catch (e) {
-                                        console.error('Failed to call ForceRetile:', e);
+                            if (proxy) {
+                                proxy.call(
+                                    'ForceRetile',
+                                    null,
+                                    Gio.DBusCallFlags.NONE,
+                                    -1,
+                                    null,
+                                    (callProxy, result) => {
+                                        if (callProxy) {
+                                            try {
+                                                callProxy.call_finish(result);
+                                            } catch (e) {
+                                                console.error('Failed to call ForceRetile:', e);
+                                            }
+                                        }
                                     }
-                                }
-                            );
+                                );
+                            }
                         }
                     );
                 });
@@ -402,7 +430,7 @@ class Tiler {
     private _tileTimeoutId: number | null;
     private _centerTimeoutIds: number[];
     private _windowOperationTimestamps: Map<number, number>;
-    private _workspaceManager: Meta.WorkspaceManager;
+    private _workspaceManager: Meta.WorkspaceManager | null;
 
     constructor(extension: Extension) {
         this._extension = extension;
@@ -428,6 +456,7 @@ class Tiler {
         this._tileTimeoutId = null;
         this._centerTimeoutIds = [];
         this._windowOperationTimestamps = new Map();
+        this._workspaceManager = null;
     }
 
     // Getter for backwards compatibility with InteractionHandler
@@ -471,6 +500,7 @@ class Tiler {
             object: this._workspaceManager,
             id: this._workspaceManager.connect('workspace-added',
                 (_: any, index: number) => {
+                    if (!this._workspaceManager) return;
                     const workspace = this._workspaceManager.get_workspace_by_index(index);
                     if (workspace) {
                         this._workspaceTracker.connectToWorkspace(workspace, {
@@ -700,7 +730,7 @@ class Tiler {
 
     _waitForWindowReady(
         win: Meta.Window,
-        workspace: Meta.Workspace,
+        _workspace: Meta.Workspace,
         callback: () => void,
         maxAttempts = 20
     ): void {
@@ -1020,7 +1050,9 @@ class Tiler {
     _splitLayout(windows: Meta.Window[], area: { x: number; y: number; width: number; height: number }): void {
         if (windows.length === 0) return;
         if (windows.length === 1) {
-            windows[0].move_resize_frame(
+            const firstWin = windows[0];
+            if (!firstWin) return;
+            firstWin.move_resize_frame(
                 true,
                 area.x,
                 area.y,
@@ -1030,7 +1062,9 @@ class Tiler {
             return;
         }
         const gap = Math.floor(this._innerGap / 2);
-        const primaryWindows = [windows[0]];
+        const firstWin = windows[0];
+        if (!firstWin) return;
+        const primaryWindows = [firstWin];
         const secondaryWindows = windows.slice(1);
         let primaryArea, secondaryArea;
         if (area.width > area.height) {
@@ -1125,6 +1159,10 @@ class Tiler {
         }
 
         const monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor) {
+            this._logger.error('No primary monitor found');
+            return;
+        }
         const workArea = workspace.get_work_area_for_monitor(monitor.index);
 
         // Log monitor and window details for multi-monitor diagnostics
@@ -1148,12 +1186,16 @@ class Tiler {
             // Current behavior: force unmaximize all windows
             windowsToTile.forEach((win) => {
                 if (!this._isWindowValid(win)) return;
-                if (win.is_maximized()) win.unmaximize();
+                if (win.is_maximized()) {
+                    win.unmaximize();
+                }
             });
         }
         // If respecting maximized windows, don't force unmaximize
         if (windowsToTile.length === 1) {
-            windowsToTile[0].move_resize_frame(
+            const firstWin = windowsToTile[0];
+            if (!firstWin) return;
+            firstWin.move_resize_frame(
                 true,
                 innerArea.x,
                 innerArea.y,
@@ -1165,6 +1207,7 @@ class Tiler {
         const gap = Math.floor(this._innerGap / 2);
         const primaryWidth = Math.floor(innerArea.width / 2) - gap;
         const primary = windowsToTile[0];
+        if (!primary) return;
         primary.move_resize_frame(
             true,
             innerArea.x,
@@ -1188,7 +1231,7 @@ export default class SimpleTilingExtension extends Extension {
     private _indicator?: any;
     private _dbus?: any;
 
-    enable(): void {
+    override enable(): void {
         this.tiler = new Tiler(this);
         this.tiler.enable();
 
@@ -1204,7 +1247,7 @@ export default class SimpleTilingExtension extends Extension {
         );
     }
 
-    disable(): void {
+    override disable(): void {
         // Unexport D-Bus interface
         if (this._dbus) {
             this._dbus.flush();

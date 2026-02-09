@@ -5,7 +5,28 @@
     "moduleResolution": "NodeNext",
     "outDir": "./dist",
     "rootDir": "./src",
-    "strict": false,
+
+    // Strictest type checking
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+
+    // Additional strictness
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+
+    // Module configuration
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "lib": [
@@ -14,8 +35,6 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
     "resolveJsonModule": true,
   },
   "include": [

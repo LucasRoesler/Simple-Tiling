@@ -20,10 +20,10 @@ export class TimeoutRegistry {
     constructor(logger?: Logger) {
         this._timeouts = new Map();
         this._nextId = 1;
-        this._logger = logger || null;
+        this._logger = logger ?? null;
     }
 
-    add(delay: number, callback: () => boolean, name: string = 'unnamed'): number {
+    add(delay: number, callback: () => boolean, name = 'unnamed'): number {
         const registryId = this._nextId++;
         const sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
             this._timeouts.delete(registryId);
@@ -34,7 +34,7 @@ export class TimeoutRegistry {
         return registryId;
     }
 
-    addSeconds(seconds: number, callback: () => boolean, name: string = 'unnamed'): number {
+    addSeconds(seconds: number, callback: () => boolean, name = 'unnamed'): number {
         const registryId = this._nextId++;
         const sourceId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
             this._timeouts.delete(registryId);
@@ -60,7 +60,7 @@ export class TimeoutRegistry {
 
     clearAll(): void {
         const count = this._timeouts.size;
-        for (const [registryId, entry] of this._timeouts) {
+        for (const [_registryId, entry] of this._timeouts) {
             try {
                 GLib.source_remove(entry.sourceId);
             } catch (e) {

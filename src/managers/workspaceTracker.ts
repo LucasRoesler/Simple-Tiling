@@ -12,6 +12,7 @@ export interface WorkspaceData {
 }
 
 interface SignalConnection {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     object: any;
     id: number;
 }
@@ -68,9 +69,13 @@ export class WorkspaceTracker {
     }
 
     getActiveWorkspaceData(): WorkspaceData | null {
-        if (!this._workspaceManager) return null;
+        if (!this._workspaceManager) {
+            return null;
+        }
         const workspace = this._workspaceManager.get_active_workspace();
-        if (!workspace) return null;
+        if (!workspace) {
+            return null;
+        }
         return this.getWorkspaceData(workspace);
     }
 
@@ -113,13 +118,13 @@ export class WorkspaceTracker {
         this._logger.debug(`Connecting to workspace ${workspace.index()}`);
 
         // Connect window-added signal
-        const addedId = workspace.connect('window-added', (ws: any, win: Meta.Window) => {
+        const addedId = workspace.connect('window-added', (ws: Meta.Workspace, win: Meta.Window) => {
             callbacks.onWindowAdded(ws, win);
         });
         this._workspaceSignals.set(`${key}-added`, { object: workspace, id: addedId });
 
         // Connect window-removed signal
-        const removedId = workspace.connect('window-removed', (ws: any, win: Meta.Window) => {
+        const removedId = workspace.connect('window-removed', (ws: Meta.Workspace, win: Meta.Window) => {
             callbacks.onWindowRemoved(ws, win);
         });
         this._workspaceSignals.set(`${key}-removed`, { object: workspace, id: removedId });

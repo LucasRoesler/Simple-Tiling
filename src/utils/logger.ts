@@ -18,8 +18,10 @@ export class Logger {
     }
 
     private _log(level: string, message: string): void {
-        if (!this._isEnabled()) return;
-        const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+        if (!this._isEnabled()) {
+            return;
+        }
+        const timestamp = new Date().toISOString().split('T')[1]?.slice(0, -1) ?? '';
         const output = `[SimpleTiling ${timestamp}] ${level}: ${message}`;
         console.log(output);
     }
