@@ -639,6 +639,7 @@ class Tiler {
 
     _onWindowWorkspaceChanged(win: Meta.Window): void {
         if (!win || !win.get_display()) return;
+        if (!this._workspaceManager) return; // Extension disabled
 
         const windowId = win.get_id();
         const newWorkspace = win.get_workspace();
@@ -755,6 +756,7 @@ class Tiler {
                 if (index > -1) this._centerTimeoutIds.splice(index, 1);
 
                 if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
+                if (!this._workspaceManager) return GLib.SOURCE_REMOVE; // Extension disabled
 
                 // Conditional unmaximize for exception windows based on setting
                 if (!this.settings.get_boolean('respect-maximized-windows') &&
@@ -958,6 +960,8 @@ class Tiler {
     }
 
     _onActiveWorkspaceChanged(): void {
+        if (!this._workspaceManager) return; // Extension disabled
+
         // Just queue a retile for the new workspace, no disconnection needed
         const workspace = this._workspaceManager.get_active_workspace();
         const wsIndex = workspace?.index() ?? -1;
@@ -1055,7 +1059,11 @@ class Tiler {
     }
 
     _tileWindows(): void {
+        if (!this._workspaceManager) return; // Extension disabled
+
         const workspace = this._workspaceManager.get_active_workspace();
+        if (!workspace) return; // No active workspace
+
         const data = this._workspaceTracker.getWorkspaceData(workspace);
         const wsIndex = workspace.index();
 
