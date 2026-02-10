@@ -89,5 +89,17 @@
       <description>When enabled, extension logs detailed information to GNOME Shell journal for troubleshooting. View logs with: journalctl -f -o cat /usr/bin/gnome-shell</description>
     </key>
 
+    <key name="default-exceptions" type="as">
+      <default>['ulauncher', 'gnome-screenshot', 'org.gnome.NautilusPreviewer', 'org.gnome.Shell.Extensions', 'evolution-alarm-notify']</default>
+      <summary>Default exception applications</summary>
+      <description>Built-in applications excluded from tiling. Updated with the extension.</description>
+    </key>
+
+    <key name="custom-exceptions" type="as">
+      <default>[]</default>
+      <summary>Custom exception applications</summary>
+      <description>User-added applications excluded from tiling. Persists across extension updates.</description>
+    </key>
+
   </schema>
 </schemalist>

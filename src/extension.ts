@@ -577,30 +577,9 @@ class Tiler {
     }
 
     _loadExceptions(): void {
-        // Load exceptions from file only
-        const file = Gio.File.new_for_path(this._extension.path + '/exceptions.txt');
-        if (file.query_exists(null)) {
-            const [ok, data] = file.load_contents(null);
-            if (ok) {
-                const txt = new TextDecoder('utf-8').decode(data);
-                this._exceptions = txt.split('\n')
-                    .map(l => l.trim())
-                    .filter(l => l && !l.startsWith('#'))
-                    .map(l => l.toLowerCase());
-                // Remove duplicates
-                this._exceptions = [...new Set(this._exceptions)];
-            } else {
-                this._exceptions = [];
-            }
-        } else {
-            this._exceptions = [];
-        }
-    }
-
-    reloadExceptions(): void {
-        this._loadExceptions();
-        // Retile after reloading exceptions
-        this.queueTile();
+        const defaults = this.settings.get_strv('default-exceptions').map(s => s.toLowerCase());
+        const custom = this.settings.get_strv('custom-exceptions').map(s => s.toLowerCase());
+        this._exceptions = [...new Set([...defaults, ...custom])];
     }
 
     _isException(win: Meta.Window): boolean {
@@ -1190,6 +1169,8 @@ class Tiler {
         // Recheck for exceptions after delay - window properties may now be set
         const windowsToRecheck = [...data.tiled];
         for (const win of windowsToRecheck) {
+            // Skip destroyed windows
+            if (!win || !win.get_display() || win.get_monitor() < 0) continue;
             if (this._isException(win)) {
                 // Move from tiled to exceptions
                 const index = data.tiled.indexOf(win);
@@ -1208,7 +1189,23 @@ class Tiler {
             }
         }
 
-        const windowsToTile = data.tiled.filter((win) => !win.minimized);
+        const windowsToTile = data.tiled.filter((win) => {
+            // Skip destroyed windows (can happen due to race between destroy event and tiling)
+            if (!win || !win.get_display()) {
+                this._logger.debug(`  Skipping window (no display): id=${win?.get_id()}`);
+                return false;
+            }
+            // Skip windows with invalid monitor (indicates window is being destroyed)
+            if (win.get_monitor() < 0) {
+                this._logger.debug(`  Skipping window (invalid monitor): "${win.get_title()}"`);
+                return false;
+            }
+            if (win.minimized) {
+                this._logger.debug(`  Skipping window (minimized): "${win.get_title()}"`);
+                return false;
+            }
+            return true;
+        });
         if (windowsToTile.length === 0) {
             this._logger.debug(`No windows to tile on workspace ${wsIndex}`);
             return;

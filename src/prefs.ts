@@ -8,7 +8,6 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
-import GObject from 'gi://GObject';
 import Gdk from 'gi://Gdk';
 import GLib from 'gi://GLib';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
@@ -148,73 +147,21 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         });
         page.add(groupExceptions);
 
-        // Setup exceptions file
-        const exceptionsFile = Gio.File.new_for_path(
-            this.path + '/exceptions.txt'
-        );
-        let exceptions: string[] = [];
+        // Load exceptions from gsettings
+        let defaultExceptions: string[] = [];
+        let customExceptions: string[] = [];
 
-        // Load exceptions function
         const loadExceptions = () => {
-            exceptions = [];
-            if (exceptionsFile.query_exists(null)) {
-                try {
-                    const [ok, contents] = exceptionsFile.load_contents(null);
-                    if (ok) {
-                        const text = new TextDecoder('utf-8').decode(contents);
-                        exceptions = text
-                            .split('\n')
-                            .map(line => line.trim())
-                            .filter(line => line && !line.startsWith('#'));
-                    }
-                } catch (e) {
-                    console.error('Failed to load exceptions:', e);
-                }
-            }
+            defaultExceptions = settings.get_strv('default-exceptions');
+            customExceptions = settings.get_strv('custom-exceptions');
         };
 
-        // Save exceptions function
-        const saveExceptions = () => {
-            try {
-                // Read existing file to preserve comments
-                let content = '';
-                if (exceptionsFile.query_exists(null)) {
-                    const [ok, contents] = exceptionsFile.load_contents(null);
-                    if (ok) {
-                        const text = new TextDecoder('utf-8').decode(contents);
-                        const lines = text.split('\n');
-                        // Keep only comment lines
-                        content = lines
-                            .filter(line => !line.trim() || line.trim().startsWith('#'))
-                            .join('\n');
-                    }
-                } else {
-                    // Create default header
-                    content = `# --- Exception List for Tiling Windows ---
-# Each line contains an application identifier (WM_CLASS for X11, or App ID for Wayland)
-# that should be ignored by the tiling manager.
+        const saveCustomExceptions = () => {
+            settings.set_strv('custom-exceptions', customExceptions);
+        };
 
-# --- Start of the Exception List ---
-`;
-                }
-
-                // Add exceptions
-                if (exceptions.length > 0) {
-                    content += '\n' + exceptions.join('\n') + '\n';
-                }
-
-                // Write file
-                const encoded = new TextEncoder().encode(content);
-                exceptionsFile.replace_contents(
-                    encoded,
-                    null,
-                    false,
-                    Gio.FileCreateFlags.NONE,
-                    null
-                );
-            } catch (e) {
-                console.error('Failed to save exceptions:', e);
-            }
+        const getAllExceptions = (): string[] => {
+            return [...new Set([...defaultExceptions, ...customExceptions])];
         };
 
         // Load initial exceptions
@@ -223,23 +170,8 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         // Create expandable row for current exceptions
         const exceptionsExpanderRow = new Adw.ExpanderRow({
             title: 'Current Exceptions',
-            subtitle: `${exceptions.length} applications excluded from tiling`
+            subtitle: `${getAllExceptions().length} applications excluded from tiling`
         });
-
-        const openEditorButton = new Gtk.Button({
-            label: 'Open in Editor',
-            valign: Gtk.Align.CENTER,
-            css_classes: ['flat']
-        });
-        openEditorButton.connect('clicked', () => {
-            try {
-                const uri = exceptionsFile.get_uri();
-                Gtk.show_uri(window, uri, Gdk.CURRENT_TIME);
-            } catch (e) {
-                console.error('Failed to open file in editor:', e);
-            }
-        });
-        exceptionsExpanderRow.add_suffix(openEditorButton);
 
         const refreshButton = new Gtk.Button({
             icon_name: 'view-refresh-symbolic',
@@ -262,13 +194,37 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             }
             exceptionRows = [];
 
-            // Update subtitle with count
-            exceptionsExpanderRow.set_subtitle(`${exceptions.length} applications excluded from tiling`);
+            const allExceptions = getAllExceptions();
 
-            // Add exception rows
-            for (const exception of exceptions) {
+            // Update subtitle with count
+            exceptionsExpanderRow.set_subtitle(`${allExceptions.length} applications excluded from tiling`);
+
+            // Add exception rows - defaults first, then custom
+            for (const exception of defaultExceptions) {
                 const row = new Adw.ActionRow({
-                    title: exception
+                    title: exception,
+                    subtitle: 'Default (bundled with extension)'
+                });
+
+                const defaultLabel = new Gtk.Label({
+                    label: 'Default',
+                    valign: Gtk.Align.CENTER,
+                    css_classes: ['dim-label']
+                });
+                row.add_suffix(defaultLabel);
+
+                exceptionsExpanderRow.add_row(row);
+                exceptionRows.push(row);
+            }
+
+            // Add custom exceptions (removable)
+            for (const exception of customExceptions) {
+                // Skip if it's also in defaults (already shown above)
+                if (defaultExceptions.includes(exception)) continue;
+
+                const row = new Adw.ActionRow({
+                    title: exception,
+                    subtitle: 'Custom (user-added)'
                 });
 
                 const removeButton = new Gtk.Button({
@@ -278,29 +234,28 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                     tooltip_text: 'Remove exception'
                 });
                 removeButton.connect('clicked', () => {
-                    const index = exceptions.indexOf(exception);
+                    const index = customExceptions.indexOf(exception);
                     if (index > -1) {
-                        exceptions.splice(index, 1);
-                        saveExceptions();
-                        loadExceptions();  // Reload from file to ensure consistency
+                        customExceptions.splice(index, 1);
+                        saveCustomExceptions();
                         populateExceptions();
                     }
                 });
                 row.add_suffix(removeButton);
 
                 exceptionsExpanderRow.add_row(row);
-                exceptionRows.push(row);  // Track the row
+                exceptionRows.push(row);
             }
 
             // Add empty state if no exceptions
-            if (exceptions.length === 0) {
+            if (allExceptions.length === 0) {
                 const emptyRow = new Adw.ActionRow({
                     title: 'No exceptions configured',
                     subtitle: 'Add exceptions using the field below',
                     sensitive: false
                 });
                 exceptionsExpanderRow.add_row(emptyRow);
-                exceptionRows.push(emptyRow);  // Track the empty row too
+                exceptionRows.push(emptyRow);
             }
         };
 
@@ -363,6 +318,7 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                 } else {
                     // Add a row for each window
                     const addedIdentifiers = new Set();
+                    const allExceptions = getAllExceptions().map(e => e.toLowerCase());
                     for (const win of windows) {
                         // Create unique identifier priority: wmClass > appId
                         const identifier = (win.wmClass || win.appId || '').toLowerCase();
@@ -376,8 +332,8 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                             subtitle: `ID: ${identifier}`
                         });
 
-                        // Check if already in exceptions
-                        const isException = exceptions.includes(identifier);
+                        // Check if already in exceptions (case-insensitive)
+                        const isException = allExceptions.includes(identifier);
 
                         if (!isException) {
                             const addButton = new Gtk.Button({
@@ -386,10 +342,9 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                                 css_classes: ['suggested-action']
                             });
                             addButton.connect('clicked', () => {
-                                if (!exceptions.includes(identifier)) {
-                                    exceptions.push(identifier);
-                                    saveExceptions();
-                                    loadExceptions();  // Reload from file to ensure consistency
+                                if (!customExceptions.map(e => e.toLowerCase()).includes(identifier)) {
+                                    customExceptions.push(identifier);
+                                    saveCustomExceptions();
                                     populateExceptions();
                                     populateWindowList(); // Refresh to update buttons
                                 }
@@ -459,10 +414,10 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
 
         const addException = () => {
             const text = entry.get_text().trim().toLowerCase();
-            if (text && !exceptions.includes(text)) {
-                exceptions.push(text);
-                saveExceptions();
-                loadExceptions();  // Reload from file to ensure consistency
+            const allExceptions = getAllExceptions().map(e => e.toLowerCase());
+            if (text && !allExceptions.includes(text)) {
+                customExceptions.push(text);
+                saveCustomExceptions();
                 populateExceptions();
                 entry.set_text('');
             }
