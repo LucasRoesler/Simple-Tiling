@@ -4,10 +4,10 @@
 
 Simple-Tiling uses a **pragmatic testing approach** tailored to GNOME Shell extension development:
 
-1. **Static Analysis**: ESLint + TypeScript strict mode catch errors at compile-time
-2. **Type Safety as Testing**: Strict TypeScript settings prevent entire classes of runtime errors
-3. **Manual Testing Protocols**: Comprehensive checklist covering critical functionality
-4. **Independent Code Reviews**: Subagent reviews at key milestones
+1. **Sandbox Testing**: Nested GNOME Shell via toolbox for isolated, repeatable testing
+2. **Static Analysis**: ESLint + TypeScript strict mode catch errors at compile-time
+3. **Type Safety as Testing**: Strict TypeScript settings prevent entire classes of runtime errors
+4. **Manual Testing Protocols**: Comprehensive checklist covering critical functionality
 
 **Why no traditional unit tests?**
 - GNOME Shell extensions run in the GJS runtime (not Node.js)
@@ -48,6 +48,55 @@ Our `tsconfig.json` enables the strictest possible type checking:
 - Unhandled undefined values
 - Dead code accumulation
 - Missing return statements
+
+## Sandbox Testing with Toolbox
+
+The primary way to test the extension is in a **nested GNOME Shell session** running inside a Fedora toolbox container. This gives you an isolated GNOME Shell instance that doesn't affect your host session — you can safely crash it, test enable/disable cycles, and iterate without logging out.
+
+### One-Time Setup
+
+Create the development toolbox (Fedora 42 with GNOME Shell + glib2-devel):
+
+```bash
+./scripts/create-toolbox.sh
+```
+
+This creates a toolbox named `gnome-shell-devel`. You only need to run this once (or again if you want to recreate it with a newer image).
+
+### Development Workflow
+
+```bash
+# 1. Build and install to the sandbox environment (.dev-data/)
+./scripts/install.sh --dev
+
+# 2. Launch a nested GNOME Shell with the extension auto-enabled
+./scripts/run-gnome-shell.sh
+```
+
+The install script uses a `.dev-data/` directory as the `XDG_DATA_HOME` and `XDG_CONFIG_HOME` for the nested shell, so all extension data, gsettings, and dconf state are local to the project and isolated from your host.
+
+### Useful Options
+
+```bash
+# Run with two monitors
+./scripts/run-gnome-shell.sh --multi-monitor
+
+# Run with debug logging enabled
+./scripts/run-gnome-shell.sh --verbose
+
+# Reinstall after changes (uninstall + build + install)
+./scripts/install.sh --dev --reinstall
+
+# Clean up the dev environment
+./scripts/install.sh --clean
+
+# Install to host system instead (for final validation)
+./scripts/install.sh --prod
+```
+
+### Viewing Logs in the Sandbox
+
+Since the nested shell runs inside `dbus-run-session`, logs go to the toolbox's journal. From the host, you can watch the nested shell's stderr output directly in the terminal where you launched `run-gnome-shell.sh`.
 
 ## Manual Testing Protocol
 
@@ -116,7 +165,7 @@ Before each release, manually verify the following scenarios:
 
 - [ ] **Reload Exceptions**
   - Add new window class to exception list in settings
-  - Disable/re-enable extension
+  - Exception takes effect immediately (no restart needed)
   - New exception class is honored
 
 #### 5. Drag-and-Drop Reordering
@@ -139,13 +188,11 @@ Before each release, manually verify the following scenarios:
 
 - [ ] **Change Gap Settings**
   - Update inner-gap value
-  - Disable/re-enable extension
-  - New gap size applied correctly
+  - Windows retile with new gap size
 
 - [ ] **Change Layout Method**
   - Switch between Primary-Stack and Fibonacci
-  - Disable/re-enable extension
-  - New layout algorithm applied
+  - Windows retile with new layout algorithm
 
 #### 7. Edge Cases
 
@@ -218,7 +265,7 @@ journalctl -f -o cat /usr/bin/gnome-shell | grep SimpleTiling
 ### Common Error Patterns
 
 **Symptom**: Windows not tiling
-- Check: Is extension enabled? (`npm run status`)
+- Check: Is extension enabled? (`gnome-extensions info simple-tiling@lucasroesler`)
 - Check: Is tiling toggled on in Quick Settings?
 - Check: Are windows in exception list?
 - Check: Are there maximized windows on workspace?
@@ -235,9 +282,9 @@ journalctl -f -o cat /usr/bin/gnome-shell | grep SimpleTiling
 
 ## Code Review Guidelines
 
-### When to Request Independent Review
+### When to Request Review
 
-Request a subagent code review when:
+Request a code review when:
 - Adding new managers or major architectural changes
 - Modifying signal management or timeout handling
 - Changing window state tracking logic
@@ -281,18 +328,15 @@ Before committing any changes:
 
 Before releasing:
 
-- [ ] Complete full manual testing protocol above
-- [ ] Test on clean GNOME Shell session (no other extensions)
-- [ ] Document any known issues in release notes
+- [ ] Complete full manual testing protocol in the sandbox (`./scripts/run-gnome-shell.sh`)
+- [ ] Test multi-monitor layout (`./scripts/run-gnome-shell.sh --multi-monitor`)
 - [ ] Verify extension works after GNOME Shell restart
+- [ ] Final validation on host system (`./scripts/install.sh --prod`)
 
 ## Future Testing Improvements
 
-Potential enhancements for the future (not current priorities):
+Potential enhancements (not current priorities):
 
-- **Container-based Integration Tests**: Run GNOME Shell in Docker/Podman with Xvfb
 - **Performance Benchmarking**: Automated timing of layout calculations
-- **Memory Profiling**: Track heap usage over time
+- **Memory Profiling**: Track heap usage over time in the nested shell
 - **Snapshot Testing**: Compare layout results for regression detection
-
-These require significant infrastructure investment and are not currently justified given the effectiveness of our static analysis + manual testing approach.
