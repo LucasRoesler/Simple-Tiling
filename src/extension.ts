@@ -1136,20 +1136,30 @@ class Tiler {
             }
         }
 
+        const primaryMonitor = Main.layoutManager.primaryMonitor;
         const windowsToTile = data.tiled.filter((win) => {
             // Skip destroyed windows (can happen due to race between destroy event and tiling)
             if (!win || !win.get_display()) {
                 this._logger.debug(`  Skipping window (no display): id=${win?.get_id()}`);
                 return false;
             }
-            // Skip windows with invalid monitor (indicates window is being destroyed)
-            if (win.get_monitor() < 0) {
-                this._logger.debug(`  Skipping window (invalid monitor): "${win.get_title()}"`);
-                return false;
-            }
             if (win.minimized) {
                 this._logger.debug(`  Skipping window (minimized): "${win.get_title()}"`);
                 return false;
+            }
+            // Handle windows with invalid monitor assignment (monitor == -1).
+            // This can happen when Mutter clears the monitor ref during destruction,
+            // or when a window gets stuck without a monitor after monitor hotplug
+            // (known issue with Electron/Wayland apps, see GNOME Shell #4713).
+            // If the window is otherwise healthy, recover by moving it to the primary monitor.
+            if (win.get_monitor() < 0) {
+                if (primaryMonitor && this._isWindowReady(win)) {
+                    this._logger.debug(`  Recovering window with invalid monitor: "${win.get_title()}" -> monitor ${primaryMonitor.index}`);
+                    win.move_to_monitor(primaryMonitor.index);
+                } else {
+                    this._logger.debug(`  Skipping window (invalid monitor, not recoverable): "${win.get_title()}"`);
+                    return false;
+                }
             }
             return true;
         });
