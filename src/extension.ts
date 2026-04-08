@@ -698,23 +698,16 @@ class Tiler {
         const winTitle = win.get_title() || '(untitled)';
         this._logger.debug(`Window "${winTitle}" moved from workspace ${prevWorkspaceIndex} to ${newWorkspaceIndex}`);
 
-        // Remove from previous workspace tracking
+        // Remove from previous workspace tracking.
+        // Do NOT add to new workspace here — win.get_workspace() can transiently
+        // return the active workspace instead of the actual destination during
+        // workspace switches. The window-added signal on the destination workspace
+        // will handle adding reliably.
         if (prevWorkspaceIndex !== undefined && prevWorkspaceIndex >= 0) {
             const prevWorkspace = this._workspaceManager.get_workspace_by_index(prevWorkspaceIndex);
             if (prevWorkspace) {
                 this._workspaceTracker.removeWindow(prevWorkspace, win);
                 this._logger.debug(`Removed from workspace ${prevWorkspaceIndex}`);
-            }
-        }
-
-        // Add to new workspace tracking (if not already tracked)
-        const newData = this._workspaceTracker.getWorkspaceData(newWorkspace);
-        if (!newData.tiled.includes(win) && !newData.exceptions.includes(win)) {
-            if (this._isException(win)) {
-                this._workspaceTracker.addWindow(newWorkspace, win, true);
-            } else if (this._isTileable(win)) {
-                this._workspaceTracker.addWindow(newWorkspace, win, false);
-                this._logger.debug(`Added to workspace ${newWorkspaceIndex} tiled list`);
             }
         }
 
