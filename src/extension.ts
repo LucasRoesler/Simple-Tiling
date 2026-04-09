@@ -698,11 +698,7 @@ class Tiler {
         const winTitle = win.get_title() || '(untitled)';
         this._logger.debug(`Window "${winTitle}" moved from workspace ${prevWorkspaceIndex} to ${newWorkspaceIndex}`);
 
-        // Remove from previous workspace tracking.
-        // Do NOT add to new workspace here — win.get_workspace() can transiently
-        // return the active workspace instead of the actual destination during
-        // workspace switches. The window-added signal on the destination workspace
-        // will handle adding reliably.
+        // Remove from previous workspace tracking
         if (prevWorkspaceIndex !== undefined && prevWorkspaceIndex >= 0) {
             const prevWorkspace = this._workspaceManager.get_workspace_by_index(prevWorkspaceIndex);
             if (prevWorkspace) {
@@ -717,7 +713,34 @@ class Tiler {
         // Record this operation to prevent rapid re-processing
         this._recordOperation(windowId);
 
-        // Queue retiling for the active workspace
+        // Defer adding to the new workspace — win.get_workspace() can transiently
+        // return the wrong workspace during rapid switches. Re-verify after a
+        // short delay so the window settles on its actual destination.
+        this._timeoutRegistry.add(50, () => {
+            if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
+            const actualWorkspace = win.get_workspace();
+            if (!actualWorkspace) return GLib.SOURCE_REMOVE;
+
+            const actualIndex = actualWorkspace.index();
+            const data = this._workspaceTracker.getWorkspaceData(actualWorkspace);
+
+            if (!data.tiled.includes(win) && !data.exceptions.includes(win)) {
+                if (this._isException(win)) {
+                    this._workspaceTracker.addWindow(actualWorkspace, win, true);
+                } else if (this._isTileable(win)) {
+                    this._workspaceTracker.addWindow(actualWorkspace, win, false);
+                    this._logger.debug(`Added to workspace ${actualIndex} tiled list (deferred)`);
+                }
+            }
+
+            // Update prevWorkspaceIndex in case it changed during the delay
+            WindowState.set(win, 'prevWorkspaceIndex', actualIndex);
+
+            this.queueTile();
+            return GLib.SOURCE_REMOVE;
+        }, `ws-change-${windowId}`);
+
+        // Queue retiling for the active workspace (handles the removal)
         this.queueTile();
     }
 
