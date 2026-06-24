@@ -4,17 +4,12 @@
 /////////////////////////////////////////////////////////////
 
 import Meta from 'gi://Meta';
-import GObject from 'gi://GObject';
 import { Logger } from '../utils/logger.js';
+import { SignalTracker } from './signalTracker.js';
 
 export interface WorkspaceData {
     tiled: Meta.Window[];
     exceptions: Meta.Window[];
-}
-
-interface SignalConnection {
-    object: GObject.Object;
-    id: number;
 }
 
 export interface WorkspaceCallbacks {
@@ -24,14 +19,14 @@ export interface WorkspaceCallbacks {
 
 export class WorkspaceTracker {
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
-    private _workspaceSignals: Map<string, SignalConnection>;
+    private _signals: SignalTracker;
     private _logger: Logger;
     private _workspaceManager: Meta.WorkspaceManager | null;
 
     constructor(logger: Logger) {
         this._logger = logger;
         this._workspaceWindows = new WeakMap();
-        this._workspaceSignals = new Map();
+        this._signals = new SignalTracker(logger);
         this._workspaceManager = null;
     }
 
@@ -40,16 +35,7 @@ export class WorkspaceTracker {
     }
 
     disable(): void {
-        // Disconnect all workspace signals
-        for (const [key, sig] of this._workspaceSignals) {
-            try {
-                sig.object.disconnect(sig.id);
-                this._logger.debug(`Disconnected workspace signal: ${key}`);
-            } catch (e) {
-                this._logger.error(`Failed to disconnect workspace signal ${key}: ${e}`);
-            }
-        }
-        this._workspaceSignals.clear();
+        this._signals.disconnectAll();
 
         // Clear workspace data (WeakMap will be garbage collected)
         this._workspaceWindows = new WeakMap();
@@ -107,24 +93,18 @@ export class WorkspaceTracker {
         const key = `workspace-${workspace.index()}`;
 
         // Skip if already connected
-        if (this._workspaceSignals.has(`${key}-added`)) {
+        if (this._signals.has(`${key}-added`)) {
             this._logger.debug(`Workspace ${workspace.index()} already connected, skipping`);
             return;
         }
 
         this._logger.debug(`Connecting to workspace ${workspace.index()}`);
 
-        // Connect window-added signal
-        const addedId = workspace.connect('window-added', (ws: Meta.Workspace, win: Meta.Window) => {
-            callbacks.onWindowAdded(ws, win);
-        });
-        this._workspaceSignals.set(`${key}-added`, { object: workspace, id: addedId });
+        this._signals.connect(`${key}-added`, workspace, 'window-added',
+            (ws: Meta.Workspace, win: Meta.Window) => callbacks.onWindowAdded(ws, win));
 
-        // Connect window-removed signal
-        const removedId = workspace.connect('window-removed', (ws: Meta.Workspace, win: Meta.Window) => {
-            callbacks.onWindowRemoved(ws, win);
-        });
-        this._workspaceSignals.set(`${key}-removed`, { object: workspace, id: removedId });
+        this._signals.connect(`${key}-removed`, workspace, 'window-removed',
+            (ws: Meta.Workspace, win: Meta.Window) => callbacks.onWindowRemoved(ws, win));
     }
 
     connectToAllWorkspaces(callbacks: WorkspaceCallbacks): void {

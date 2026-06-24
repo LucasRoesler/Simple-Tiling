@@ -13,8 +13,6 @@ import Meta from 'gi://Meta';
  * Add new properties here with proper types.
  */
 export interface WindowStateData {
-    /** Signal ID for workspace-changed signal */
-    workspaceSignalId?: number;
     /** Previous workspace index for change detection */
     prevWorkspaceIndex?: number;
     /** Registry ID for window ready timer */
