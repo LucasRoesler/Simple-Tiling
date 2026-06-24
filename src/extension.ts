@@ -840,7 +840,7 @@ class Tiler {
 
                 // Only make window on top if the setting is enabled
                 if (this.settings.get_boolean('exceptions-always-on-top')) {
-                    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    this._timeoutRegistry.addIdle(() => {
                         if (win.get_display()) {
                             if (typeof (win as any).set_keep_above === "function")
                                 (win as any).set_keep_above(true);
@@ -848,7 +848,7 @@ class Tiler {
                                 (win as any).make_above();
                         }
                         return GLib.SOURCE_REMOVE;
-                    });
+                    }, 'center-window-above');
                 }
                 return GLib.SOURCE_REMOVE;
             },
