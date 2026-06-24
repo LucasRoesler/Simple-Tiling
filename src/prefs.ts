@@ -220,7 +220,9 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             // Add custom exceptions (removable)
             for (const exception of customExceptions) {
                 // Skip if it's also in defaults (already shown above)
-                if (defaultExceptions.includes(exception)) continue;
+                if (defaultExceptions.includes(exception)) {
+                    continue;
+                }
 
                 const row = new Adw.ActionRow({
                     title: exception,
@@ -324,7 +326,9 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                         const identifier = (win.wmClass || win.appId || '').toLowerCase();
 
                         // Skip if already added or empty
-                        if (!identifier || addedIdentifiers.has(identifier)) continue;
+                        if (!identifier || addedIdentifiers.has(identifier)) {
+                            continue;
+                        }
                         addedIdentifiers.add(identifier);
 
                         const row = new Adw.ActionRow({

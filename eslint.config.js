@@ -36,7 +36,9 @@ export default [
             'prefer-const': 'error',
             'no-var': 'error',
             'eqeqeq': ['error', 'always'],
-            'curly': ['error', 'all'],
+            // Single-line guard clauses (`if (x) return;`) are idiomatic here and
+            // reduce nesting; require braces only for multi-line bodies.
+            'curly': ['error', 'multi-line'],
             'no-throw-literal': 'error',
             'prefer-promise-reject-errors': 'error',
 

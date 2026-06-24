@@ -64,8 +64,9 @@ function getPointerXY(): [number, number] {
     const ev = Clutter.get_current_event();
     if (ev) {
         const coords = ev.get_coords();
-        if (Array.isArray(coords))
+        if (Array.isArray(coords)) {
             return coords;
+        }
     }
 
     // TODO: Clutter 17 removed Seat.get_pointer(). The fallback to
@@ -105,9 +106,10 @@ class InteractionHandler {
     enable(): void {
         this._prepareWmShortcuts();
 
-        if (this._wmKeysToDisable.length)
+        if (this._wmKeysToDisable.length) {
             this._wmKeysToDisable.forEach(k =>
                 this._wmSettings.set_value(k, new GLib.Variant('as', [])));
+        }
 
         this._bindAllShortcuts();
         this._settingsChangedId =
@@ -115,9 +117,10 @@ class InteractionHandler {
 
         this._grabOpIds.push(
             global.display.connect('grab-op-begin',
-                (_: any, __: any, win: Meta.Window) => {
-                    if (this.tiler.windows.includes(win))
+                (_: unknown, __: unknown, win: Meta.Window) => {
+                    if (this.tiler.windows.includes(win)) {
                         this.tiler.grabbedWindow = win;
+                    }
                 })
         );
         this._grabOpIds.push(
@@ -126,13 +129,14 @@ class InteractionHandler {
     }
 
     disable(): void {
-        if (this._wmKeysToDisable.length)
+        if (this._wmKeysToDisable.length) {
             this._wmKeysToDisable.forEach(k => {
                 const savedValue = this._savedWmShortcuts[k];
                 if (savedValue) {
                     this._wmSettings.set_value(k, savedValue);
                 }
             });
+        }
 
         this._unbindAllShortcuts();
 
@@ -177,9 +181,9 @@ class InteractionHandler {
 
         // Only disable tiling shortcuts since they conflict with our swap shortcuts
         // Maximize shortcuts are now compatible with our respect-maximized-windows feature
-        if (schema.has_key('toggle-tiled-left'))
+        if (schema.has_key('toggle-tiled-left')) {
             keys.push('toggle-tiled-left', 'toggle-tiled-right');
-        else {
+        } else {
             add('tile-left'); add('tile-right');
         }
 
@@ -313,6 +317,7 @@ const TilingToggle = GObject.registerClass(
     // with custom params and touches private GNOME internals (_settingsActions),
     // neither of which the @girs base-class types model. Removing the cast does
     // not typecheck. Do not "fix" this.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
         private _extensionObject!: Extension;
         private _settings!: Gio.Settings;
@@ -330,6 +335,7 @@ const TilingToggle = GObject.registerClass(
             // Bind the toggle to our tiling-enabled setting
             this._settings = extensionObject.getSettings();
             this._settings.bind('tiling-enabled',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 this as any, 'checked',
                 Gio.SettingsBindFlags.DEFAULT);
 
@@ -391,9 +397,13 @@ const TilingToggle = GObject.registerClass(
 const SimpleTilingIndicator = GObject.registerClass(
     // `as any` is required for the same reason as TilingToggle above: the
     // @girs SystemIndicator types don't model the GJS _init override idiom.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
+        // GNOME-internal members the @girs types don't model.
+        /* eslint-disable @typescript-eslint/no-explicit-any */
         private _tilingToggle?: any;
         public declare quickSettingsItems: any[];
+        /* eslint-enable @typescript-eslint/no-explicit-any */
 
         _init(extensionObject: Extension) {
             super._init();
@@ -506,7 +516,7 @@ class Tiler {
         this._signalIds.set('workspace-added', {
             object: this._workspaceManager,
             id: this._workspaceManager.connect('workspace-added',
-                (_: any, index: number) => {
+                (_: unknown, index: number) => {
                     if (!this._workspaceManager) return;
                     const workspace = this._workspaceManager.get_workspace_by_index(index);
                     if (workspace) {
@@ -671,7 +681,7 @@ class Tiler {
                     win.disconnect(signalId);
                 }
                 this._logger.debug(`Disconnected workspace-changed signal for window ${windowId}`);
-            } catch (e) {
+            } catch {
                 // Window already destroyed, signal auto-disconnected
                 this._logger.debug(`Window ${windowId} signal already disconnected (window destroyed)`);
             }
@@ -849,10 +859,15 @@ class Tiler {
                 if (this.settings.get_boolean('exceptions-always-on-top')) {
                     this._timeoutRegistry.addIdle(() => {
                         if (win.get_display()) {
-                            if (typeof (win as any).set_keep_above === "function")
-                                (win as any).set_keep_above(true);
-                            else if (typeof (win as any).make_above === "function")
-                                (win as any).make_above();
+                            // set_keep_above/make_above availability varies across
+                            // Meta versions; feature-detect at runtime.
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const w = win as any;
+                            if (typeof w.set_keep_above === "function") {
+                                w.set_keep_above(true);
+                            } else if (typeof w.make_above === "function") {
+                                w.make_above();
+                            }
                         }
                         return GLib.SOURCE_REMOVE;
                     }, 'center-window-above');
@@ -1010,7 +1025,9 @@ class Tiler {
                     if (sig) {
                         try {
                             sig.object.disconnect(sig.id);
-                        } catch (e) { }
+                        } catch (e) {
+                            this._logger.debug(`Failed to disconnect ${key} (window likely destroyed): ${e}`);
+                        }
                         this._signalIds.delete(key);
                     }
                 }
@@ -1195,8 +1212,11 @@ class Tiler {
 // ── EXTENSION‑WRAPPER ───────────────────────────────────
 export default class SimpleTilingExtension extends Extension {
     public tiler?: Tiler;
+    // Instance of the registerClass'd SimpleTilingIndicator, whose constructed
+    // type the @girs types don't expose.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private _indicator?: any;
-    private _dbus?: any;
+    private _dbus?: Gio.DBusExportedObject;
 
     override enable(): void {
         this.tiler = new Tiler(this);
@@ -1204,6 +1224,7 @@ export default class SimpleTilingExtension extends Extension {
 
         // Create and add Quick Settings indicator
         this._indicator = new SimpleTilingIndicator(this);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
 
         // Export D-Bus interface exactly like focused-window-dbus
