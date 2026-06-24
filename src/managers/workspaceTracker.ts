@@ -25,6 +25,8 @@ export interface WorkspaceCallbacks {
 export class WorkspaceTracker {
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
     private _workspaceSignals: Map<string, SignalConnection>;
+    private _workspaceIds: WeakMap<Meta.Workspace, number>;
+    private _nextWorkspaceId: number;
     private _logger: Logger;
     private _workspaceManager: Meta.WorkspaceManager | null;
 
@@ -32,7 +34,23 @@ export class WorkspaceTracker {
         this._logger = logger;
         this._workspaceWindows = new WeakMap();
         this._workspaceSignals = new Map();
+        this._workspaceIds = new WeakMap();
+        this._nextWorkspaceId = 1;
         this._workspaceManager = null;
+    }
+
+    // Stable identifier for a workspace object, independent of its mutable
+    // index(). GNOME reuses indices when workspaces are removed/reordered, so
+    // keying signal bookkeeping by index causes a new workspace to be mistaken
+    // for an already-tracked one. The workspace object itself is stable, so we
+    // assign each a monotonic id on first use.
+    private _idFor(workspace: Meta.Workspace): number {
+        let id = this._workspaceIds.get(workspace);
+        if (id === undefined) {
+            id = this._nextWorkspaceId++;
+            this._workspaceIds.set(workspace, id);
+        }
+        return id;
     }
 
     enable(workspaceManager: Meta.WorkspaceManager): void {
@@ -104,7 +122,7 @@ export class WorkspaceTracker {
     }
 
     connectToWorkspace(workspace: Meta.Workspace, callbacks: WorkspaceCallbacks): void {
-        const key = `workspace-${workspace.index()}`;
+        const key = `workspace-${this._idFor(workspace)}`;
 
         // Skip if already connected
         if (this._workspaceSignals.has(`${key}-added`)) {
@@ -140,6 +158,35 @@ export class WorkspaceTracker {
             const workspace = this._workspaceManager.get_workspace_by_index(i);
             if (workspace) {
                 this.connectToWorkspace(workspace, callbacks);
+            }
+        }
+    }
+
+    // Disconnect signals for workspaces that are no longer present in the
+    // manager. Call this on 'workspace-removed' so removed workspaces don't
+    // leave stale tracked signals behind.
+    pruneRemovedWorkspaces(): void {
+        if (!this._workspaceManager) {
+            return;
+        }
+
+        const live = new Set<Meta.Workspace>();
+        for (let i = 0; i < this._workspaceManager.get_n_workspaces(); i++) {
+            const workspace = this._workspaceManager.get_workspace_by_index(i);
+            if (workspace) {
+                live.add(workspace);
+            }
+        }
+
+        for (const [key, sig] of [...this._workspaceSignals]) {
+            if (!live.has(sig.object as Meta.Workspace)) {
+                try {
+                    sig.object.disconnect(sig.id);
+                    this._logger.debug(`Pruned stale workspace signal: ${key}`);
+                } catch (e) {
+                    this._logger.error(`Failed to disconnect stale workspace signal ${key}: ${e}`);
+                }
+                this._workspaceSignals.delete(key);
             }
         }
     }

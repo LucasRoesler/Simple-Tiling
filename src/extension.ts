@@ -526,6 +526,14 @@ class Tiler {
                 })
         });
 
+        // Prune tracking for workspaces that get removed, so stale signal
+        // entries don't accumulate (indices are reused on removal).
+        this._signalIds.set('workspace-removed', {
+            object: this._workspaceManager,
+            id: this._workspaceManager.connect('workspace-removed',
+                () => this._workspaceTracker.pruneRemovedWorkspaces())
+        });
+
         this._interactionHandler.enable();
 
         this._signalIds.set('settings-changed', {
