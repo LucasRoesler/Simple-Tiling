@@ -23,37 +23,43 @@ export class TimeoutRegistry {
         this._logger = logger ?? null;
     }
 
-    add(delay: number, callback: () => boolean, name = 'unnamed'): number {
+    // Shared bookkeeping for all timer flavors. `schedule` creates the GLib
+    // source from the wrapped handler and returns its source id.
+    private _register(name: string, schedule: (handler: () => boolean) => number, callback: () => boolean): number {
         const registryId = this._nextId++;
-        const sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-            this._timeouts.delete(registryId);
-            return callback();
+        const sourceId = schedule(() => {
+            let keep = false;
+            try {
+                keep = callback();
+            } finally {
+                // Stop tracking only once the source is actually done. A callback
+                // returning SOURCE_CONTINUE stays tracked so remove()/clearAll()
+                // can still cancel it; deleting unconditionally (as before) would
+                // leak an unkillable recurring source.
+                if (!keep) {
+                    this._timeouts.delete(registryId);
+                }
+            }
+            return keep;
         });
         this._timeouts.set(registryId, { sourceId, name });
         this._logger?.debug(`Timeout added: ${name} (id=${registryId})`);
         return registryId;
     }
 
+    add(delay: number, callback: () => boolean, name = 'unnamed'): number {
+        return this._register(name,
+            (handler) => GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, handler), callback);
+    }
+
     addIdle(callback: () => boolean, name = 'unnamed'): number {
-        const registryId = this._nextId++;
-        const sourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            this._timeouts.delete(registryId);
-            return callback();
-        });
-        this._timeouts.set(registryId, { sourceId, name });
-        this._logger?.debug(`Idle added: ${name} (id=${registryId})`);
-        return registryId;
+        return this._register(name,
+            (handler) => GLib.idle_add(GLib.PRIORITY_DEFAULT, handler), callback);
     }
 
     addSeconds(seconds: number, callback: () => boolean, name = 'unnamed'): number {
-        const registryId = this._nextId++;
-        const sourceId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
-            this._timeouts.delete(registryId);
-            return callback();
-        });
-        this._timeouts.set(registryId, { sourceId, name });
-        this._logger?.debug(`Timeout (seconds) added: ${name} (id=${registryId})`);
-        return registryId;
+        return this._register(name,
+            (handler) => GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, handler), callback);
     }
 
     remove(registryId: number): void {
@@ -84,9 +90,5 @@ export class TimeoutRegistry {
 
     get count(): number {
         return this._timeouts.size;
-    }
-
-    destroy(): void {
-        this.clearAll();
     }
 }
