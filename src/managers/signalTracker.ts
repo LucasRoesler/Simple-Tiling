@@ -32,10 +32,12 @@ export class SignalTracker {
     }
 
     /**
-     * Connect `signalName` on `object` and track it under `key`.
-     * Callers that may connect twice should guard with has() first.
+     * Connect `signalName` on `object` and track it under `key`, returning the
+     * handler id. Idempotent per key: any signal already tracked under `key` is
+     * disconnected first, so re-connecting never leaks the previous handler.
      */
     connect(key: string, object: GObject.Object, signalName: string, callback: SignalCallback): number {
+        this.disconnect(key);
         const id = object.connect(signalName, callback);
         this._signals.set(key, { object, id });
         return id;
