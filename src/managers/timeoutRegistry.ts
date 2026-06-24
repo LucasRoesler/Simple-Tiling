@@ -34,6 +34,17 @@ export class TimeoutRegistry {
         return registryId;
     }
 
+    addIdle(callback: () => boolean, name = 'unnamed'): number {
+        const registryId = this._nextId++;
+        const sourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._timeouts.delete(registryId);
+            return callback();
+        });
+        this._timeouts.set(registryId, { sourceId, name });
+        this._logger?.debug(`Idle added: ${name} (id=${registryId})`);
+        return registryId;
+    }
+
     addSeconds(seconds: number, callback: () => boolean, name = 'unnamed'): number {
         const registryId = this._nextId++;
         const sourceId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
