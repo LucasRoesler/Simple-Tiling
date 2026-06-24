@@ -7,7 +7,7 @@
 import Gio from 'gi://Gio';
 
 export class Logger {
-    private settings: Gio.Settings;
+    private readonly settings: Gio.Settings;
 
     constructor(settings: Gio.Settings) {
         this.settings = settings;
@@ -17,24 +17,26 @@ export class Logger {
         return this.settings.get_boolean('debug-logging');
     }
 
-    private _log(level: string, message: string): void {
-        if (!this._isEnabled()) {
-            return;
-        }
+    private _format(level: string, message: string): string {
         const timestamp = new Date().toISOString().split('T')[1]?.slice(0, -1) ?? '';
-        const output = `[SimpleTiling ${timestamp}] ${level}: ${message}`;
-        console.log(output);
+        return `[SimpleTiling ${timestamp}] ${level}: ${message}`;
     }
 
     debug(message: string): void {
-        this._log('DEBUG', message);
+        if (this._isEnabled()) {
+            console.log(this._format('DEBUG', message));
+        }
     }
 
     info(message: string): void {
-        this._log('INFO', message);
+        if (this._isEnabled()) {
+            console.log(this._format('INFO', message));
+        }
     }
 
     error(message: string): void {
-        this._log('ERROR', message);
+        // Errors always emit, regardless of the debug-logging setting, so real
+        // failures are never silently dropped.
+        console.error(this._format('ERROR', message));
     }
 }

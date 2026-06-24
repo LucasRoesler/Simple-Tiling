@@ -4,8 +4,6 @@
 //     Pattern based on MosaicWM's windowState.js         //
 /////////////////////////////////////////////////////////////
 
-// WeakMap to store state associated with Meta.Window objects
-// This avoids polluting native objects with custom properties
 import Meta from 'gi://Meta';
 
 /**
@@ -29,6 +27,8 @@ export interface WindowStateData {
  */
 export type WindowStateProperty = keyof WindowStateData;
 
+// WeakMap keyed by Meta.Window so per-window state lives outside the native
+// objects (no custom properties on them) and is collected with the window.
 const windowStates = new WeakMap<Meta.Window, WindowStateData>();
 
 export function get<K extends WindowStateProperty>(
@@ -68,10 +68,6 @@ export function remove<K extends WindowStateProperty>(
     if (state) {
         delete state[property];
     }
-}
-
-export function getState(window: Meta.Window): WindowStateData | undefined {
-    return windowStates.get(window);
 }
 
 export function clear(window: Meta.Window): void {
