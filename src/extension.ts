@@ -22,6 +22,7 @@ import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import * as WindowState from './managers/windowState.js';
 import { WorkspaceTracker } from './managers/workspaceTracker.js';
+import { computeLayout } from './layout/tilingLayout.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
@@ -1075,59 +1076,6 @@ class Tiler {
         }
     }
 
-    _splitLayout(windows: Meta.Window[], area: { x: number; y: number; width: number; height: number }): void {
-        if (windows.length === 0) return;
-        if (windows.length === 1) {
-            const firstWin = windows[0];
-            if (!firstWin) return;
-            firstWin.move_resize_frame(
-                true,
-                area.x,
-                area.y,
-                area.width,
-                area.height
-            );
-            return;
-        }
-        const gap = Math.floor(this._innerGap / 2);
-        const firstWin = windows[0];
-        if (!firstWin) return;
-        const primaryWindows = [firstWin];
-        const secondaryWindows = windows.slice(1);
-        let primaryArea, secondaryArea;
-        if (area.width > area.height) {
-            const primaryWidth = Math.floor(area.width / 2) - gap;
-            primaryArea = {
-                x: area.x,
-                y: area.y,
-                width: primaryWidth,
-                height: area.height,
-            };
-            secondaryArea = {
-                x: area.x + primaryWidth + this._innerGap,
-                y: area.y,
-                width: area.width - primaryWidth - this._innerGap,
-                height: area.height,
-            };
-        } else {
-            const primaryHeight = Math.floor(area.height / 2) - gap;
-            primaryArea = {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: primaryHeight,
-            };
-            secondaryArea = {
-                x: area.x,
-                y: area.y + primaryHeight + this._innerGap,
-                width: area.width,
-                height: area.height - primaryHeight - this._innerGap,
-            };
-        }
-        this._splitLayout(primaryWindows, primaryArea);
-        this._splitLayout(secondaryWindows, secondaryArea);
-    }
-
     _tileWindows(): void {
         if (!this._workspaceManager) return; // Extension disabled
 
@@ -1230,36 +1178,17 @@ class Tiler {
             });
         }
         // If respecting maximized windows, don't force unmaximize
-        if (windowsToTile.length === 1) {
-            const firstWin = windowsToTile[0];
-            if (!firstWin) return;
-            firstWin.move_resize_frame(
-                true,
-                innerArea.x,
-                innerArea.y,
-                innerArea.width,
-                innerArea.height
-            );
-            return;
-        }
-        const gap = Math.floor(this._innerGap / 2);
-        const primaryWidth = Math.floor(innerArea.width / 2) - gap;
-        const primary = windowsToTile[0];
-        if (!primary) return;
-        primary.move_resize_frame(
-            true,
-            innerArea.x,
-            innerArea.y,
-            primaryWidth,
-            innerArea.height
-        );
-        const stackArea = {
-            x: innerArea.x + primaryWidth + this._innerGap,
-            y: innerArea.y,
-            width: innerArea.width - primaryWidth - this._innerGap,
-            height: innerArea.height,
-        };
-        this._splitLayout(windowsToTile.slice(1), stackArea);
+
+        // Compute the target rectangle for each window, then apply.
+        const rects = computeLayout(windowsToTile.length, innerArea, this._innerGap);
+        windowsToTile.forEach((win, i) => {
+            // Re-check validity: a window may have been destroyed between the
+            // filter above and here.
+            if (!this._isWindowValid(win)) return;
+            const rect = rects[i];
+            if (!rect) return;
+            win.move_resize_frame(true, rect.x, rect.y, rect.width, rect.height);
+        });
     }
 }
 
