@@ -4,6 +4,7 @@
 /////////////////////////////////////////////////////////////
 
 import Meta from 'gi://Meta';
+import GObject from 'gi://GObject';
 import { Logger } from '../utils/logger.js';
 
 export interface WorkspaceData {
@@ -12,8 +13,7 @@ export interface WorkspaceData {
 }
 
 interface SignalConnection {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    object: any;
+    object: GObject.Object;
     id: number;
 }
 

@@ -42,7 +42,7 @@ const SimpleTilingIface = `
   </interface>
 </node>`;
 
-const KEYBINDINGS: { [key: string]: (self: any) => void } = {
+const KEYBINDINGS: { [key: string]: (self: InteractionHandler) => void } = {
     'swap-primary-window': (self) => self._swapWithPrimary(),
     'swap-left-window': (self) => self._swapInDirection('left'),
     'swap-right-window': (self) => self._swapInDirection('right'),
@@ -77,7 +77,7 @@ function getPointerXY(): [number, number] {
 
 // ── TYPE DEFINITIONS ────────────────────────────────────────
 interface SignalConnection {
-    object: any;
+    object: GObject.Object;
     id: number;
 }
 
@@ -309,6 +309,10 @@ class InteractionHandler {
 
 // ── TILING TOGGLE QUICK SETTING ───────────────────────────
 const TilingToggle = GObject.registerClass(
+    // `as any` is required: the GJS GObject subclassing idiom overrides _init
+    // with custom params and touches private GNOME internals (_settingsActions),
+    // neither of which the @girs base-class types model. Removing the cast does
+    // not typecheck. Do not "fix" this.
     class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
         private _extensionObject!: Extension;
         private _settings!: Gio.Settings;
@@ -385,6 +389,8 @@ const TilingToggle = GObject.registerClass(
 
 // ── SYSTEM INDICATOR ────────────────────────────────────────
 const SimpleTilingIndicator = GObject.registerClass(
+    // `as any` is required for the same reason as TilingToggle above: the
+    // @girs SystemIndicator types don't model the GJS _init override idiom.
     class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
         private _tilingToggle?: any;
         public declare quickSettingsItems: any[];
