@@ -963,8 +963,6 @@ class Tiler {
         if (this.settings.get_boolean('tiling-enabled')) {
             this.queueTile();
         }
-        // Update workspace fingerprint after adding window
-        this._workspaceTracker.updateFingerprint(workspace);
     }
 
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
@@ -1020,10 +1018,6 @@ class Tiler {
         }
 
         this.queueTile();
-        // Update workspace fingerprint after removing window
-        if (workspace) {
-            this._workspaceTracker.updateFingerprint(workspace);
-        }
     }
 
     _onActiveWorkspaceChanged(): void {

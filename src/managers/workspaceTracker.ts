@@ -24,7 +24,6 @@ export interface WorkspaceCallbacks {
 
 export class WorkspaceTracker {
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
-    private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
     private _workspaceSignals: Map<string, SignalConnection>;
     private _logger: Logger;
     private _workspaceManager: Meta.WorkspaceManager | null;
@@ -32,7 +31,6 @@ export class WorkspaceTracker {
     constructor(logger: Logger) {
         this._logger = logger;
         this._workspaceWindows = new WeakMap();
-        this._workspaceFingerprints = new WeakMap();
         this._workspaceSignals = new Map();
         this._workspaceManager = null;
     }
@@ -55,7 +53,6 @@ export class WorkspaceTracker {
 
         // Clear workspace data (WeakMap will be garbage collected)
         this._workspaceWindows = new WeakMap();
-        this._workspaceFingerprints = new WeakMap();
         this._workspaceManager = null;
     }
 
@@ -147,21 +144,4 @@ export class WorkspaceTracker {
         }
     }
 
-    // Workspace fingerprinting for change detection (currently unused, reserved for future optimization)
-    createFingerprint(windows: Meta.Window[]): string {
-        return windows
-            .map(win => win.get_id())
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    updateFingerprint(workspace: Meta.Workspace): void {
-        const data = this.getWorkspaceData(workspace);
-        const fingerprint = this.createFingerprint(data.tiled);
-        this._workspaceFingerprints.set(workspace, fingerprint);
-    }
-
-    getFingerprint(workspace: Meta.Workspace): string | undefined {
-        return this._workspaceFingerprints.get(workspace);
-    }
 }
