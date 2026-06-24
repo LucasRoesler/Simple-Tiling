@@ -21,6 +21,7 @@ import Shell from 'gi://Shell';
 import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import { WorkspaceTracker } from './managers/workspaceTracker.js';
+import { SignalTracker } from './managers/signalTracker.js';
 import { computeLayout } from './layout/tilingLayout.js';
 
 // ── CONST ────────────────────────────────────────────
@@ -75,12 +76,6 @@ function getPointerXY(): [number, number] {
     return [0, 0];
 }
 
-// ── TYPE DEFINITIONS ────────────────────────────────────────
-interface SignalConnection {
-    object: GObject.Object;
-    id: number;
-}
-
 // ── INTERACTIONHANDLER ───────────────────────────────────
 class InteractionHandler {
     private tiler: Tiler;
@@ -88,8 +83,7 @@ class InteractionHandler {
     private _wmSettings: Gio.Settings;
     private _wmKeysToDisable: string[];
     private _savedWmShortcuts: { [key: string]: GLib.Variant };
-    private _grabOpIds: number[];
-    private _settingsChangedId: number | null;
+    private _signals: SignalTracker;
 
     constructor(tiler: Tiler) {
         this.tiler = tiler;
@@ -98,8 +92,7 @@ class InteractionHandler {
 
         this._wmKeysToDisable = [];
         this._savedWmShortcuts = {};
-        this._grabOpIds = [];
-        this._settingsChangedId = null;
+        this._signals = new SignalTracker();
     }
 
     enable(): void {
@@ -111,20 +104,17 @@ class InteractionHandler {
         }
 
         this._bindAllShortcuts();
-        this._settingsChangedId =
-            this._settings.connect('changed', () => this._onSettingsChanged());
+        this._signals.connect('settings-changed', this._settings, 'changed',
+            () => this._onSettingsChanged());
 
-        this._grabOpIds.push(
-            global.display.connect('grab-op-begin',
-                (_: unknown, __: unknown, win: Meta.Window) => {
-                    if (this.tiler.windows.includes(win)) {
-                        this.tiler.grabbedWindow = win;
-                    }
-                })
-        );
-        this._grabOpIds.push(
-            global.display.connect('grab-op-end', () => this._onGrabEnd())
-        );
+        this._signals.connect('grab-op-begin', global.display, 'grab-op-begin',
+            (_: unknown, __: unknown, win: Meta.Window) => {
+                if (this.tiler.windows.includes(win)) {
+                    this.tiler.grabbedWindow = win;
+                }
+            });
+        this._signals.connect('grab-op-end', global.display, 'grab-op-end',
+            () => this._onGrabEnd());
     }
 
     disable(): void {
@@ -139,12 +129,7 @@ class InteractionHandler {
 
         this._unbindAllShortcuts();
 
-        if (this._settingsChangedId) {
-            this._settings.disconnect(this._settingsChangedId);
-            this._settingsChangedId = null;
-        }
-        this._grabOpIds.forEach(id => global.display.disconnect(id));
-        this._grabOpIds = [];
+        this._signals.disconnectAll();
     }
 
     _bindAllShortcuts(): void {
@@ -434,7 +419,7 @@ class Tiler {
     private _logger: Logger;
     private _timeoutRegistry: TimeoutRegistry;
     private _workspaceTracker: WorkspaceTracker;
-    private _signalIds: Map<string, SignalConnection>;
+    private _signals: SignalTracker;
     private _tileInProgress: boolean;
     private _innerGap: number;
     private _outerGapVertical: number;
@@ -457,7 +442,7 @@ class Tiler {
         this._workspaceTracker = new WorkspaceTracker(this._logger);
 
         this.grabbedWindow = null;
-        this._signalIds = new Map();
+        this._signals = new SignalTracker(this._logger);
         this._tileInProgress = false;
 
         this._innerGap = this.settings.get_int('inner-gap');
@@ -489,11 +474,8 @@ class Tiler {
         this._workspaceTracker.enable(this._workspaceManager);
 
         // Connect to workspace changed signal
-        this._signalIds.set('workspace-changed', {
-            object: this._workspaceManager,
-            id: this._workspaceManager.connect('active-workspace-changed',
-                () => this._onActiveWorkspaceChanged())
-        });
+        this._signals.connect('workspace-changed', this._workspaceManager,
+            'active-workspace-changed', () => this._onActiveWorkspaceChanged());
 
         // Connect to all existing workspaces via WorkspaceTracker
         this._workspaceTracker.connectToAllWorkspaces({
@@ -512,35 +494,27 @@ class Tiler {
         }
 
         // Listen for new workspaces being added
-        this._signalIds.set('workspace-added', {
-            object: this._workspaceManager,
-            id: this._workspaceManager.connect('workspace-added',
-                (_: unknown, index: number) => {
-                    if (!this._workspaceManager) return;
-                    const workspace = this._workspaceManager.get_workspace_by_index(index);
-                    if (workspace) {
-                        this._workspaceTracker.connectToWorkspace(workspace, {
-                            onWindowAdded: (ws, win) => this._onWindowAdded(ws, win),
-                            onWindowRemoved: (ws, win) => this._onWindowRemoved(ws, win)
-                        });
-                    }
-                })
-        });
+        this._signals.connect('workspace-added', this._workspaceManager, 'workspace-added',
+            (_: unknown, index: number) => {
+                if (!this._workspaceManager) return;
+                const workspace = this._workspaceManager.get_workspace_by_index(index);
+                if (workspace) {
+                    this._workspaceTracker.connectToWorkspace(workspace, {
+                        onWindowAdded: (ws, win) => this._onWindowAdded(ws, win),
+                        onWindowRemoved: (ws, win) => this._onWindowRemoved(ws, win)
+                    });
+                }
+            });
 
         // Prune tracking for workspaces that get removed, so stale signal
         // entries don't accumulate (indices are reused on removal).
-        this._signalIds.set('workspace-removed', {
-            object: this._workspaceManager,
-            id: this._workspaceManager.connect('workspace-removed',
-                () => this._workspaceTracker.pruneRemovedWorkspaces())
-        });
+        this._signals.connect('workspace-removed', this._workspaceManager, 'workspace-removed',
+            () => this._workspaceTracker.pruneRemovedWorkspaces());
 
         this._interactionHandler.enable();
 
-        this._signalIds.set('settings-changed', {
-            object: this.settings,
-            id: this.settings.connect('changed', () => this._onSettingsChanged())
-        });
+        this._signals.connect('settings-changed', this.settings, 'changed',
+            () => this._onSettingsChanged());
     }
 
     disable(): void {
@@ -555,10 +529,7 @@ class Tiler {
         this._interactionHandler.disable();
 
         // Disconnect all signals
-        for (const [, sig] of this._signalIds) {
-            try { sig.object.disconnect(sig.id); } catch { }
-        }
-        this._signalIds.clear();
+        this._signals.disconnectAll();
 
         // Disable workspace tracker (cleans up workspace signals and data)
         this._workspaceTracker.disable();
@@ -820,25 +791,13 @@ class Tiler {
 
         const id = win.get_id();
         // Only connect signals if not already connected
-        if (!this._signalIds.has(`unmanaged-${id}`)) {
-            this._signalIds.set(`unmanaged-${id}`, {
-                object: win,
-                id: win.connect("unmanaged", () =>
-                    this._onWindowRemoved(null, win)  // Pass null to indicate destruction
-                ),
-            });
-            this._signalIds.set(`size-changed-${id}`, {
-                object: win,
-                id: win.connect("size-changed", () => {
-                    if (!this.grabbedWindow) this.queueTile();
-                }),
-            });
-            this._signalIds.set(`minimized-${id}`, {
-                object: win,
-                id: win.connect("notify::minimized", () =>
-                    this._onWindowMinimizedStateChanged()
-                ),
-            });
+        if (!this._signals.has(`unmanaged-${id}`)) {
+            this._signals.connect(`unmanaged-${id}`, win, "unmanaged",
+                () => this._onWindowRemoved(null, win)); // Pass null to indicate destruction
+            this._signals.connect(`size-changed-${id}`, win, "size-changed",
+                () => { if (!this.grabbedWindow) this.queueTile(); });
+            this._signals.connect(`minimized-${id}`, win, "notify::minimized",
+                () => this._onWindowMinimizedStateChanged());
         }
 
         // Only queue tiling if tiling is enabled
@@ -878,18 +837,7 @@ class Tiler {
         // Clean up signals only if window is being destroyed (workspace is null)
         if (!workspace) {
             ["unmanaged", "size-changed", "minimized"].forEach((prefix) => {
-                const key = `${prefix}-${win.get_id()}`;
-                if (this._signalIds.has(key)) {
-                    const sig = this._signalIds.get(key);
-                    if (sig) {
-                        try {
-                            sig.object.disconnect(sig.id);
-                        } catch (e) {
-                            this._logger.debug(`Failed to disconnect ${key} (window likely destroyed): ${e}`);
-                        }
-                        this._signalIds.delete(key);
-                    }
-                }
+                this._signals.disconnect(`${prefix}-${win.get_id()}`);
             });
         }
 

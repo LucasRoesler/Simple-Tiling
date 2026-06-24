@@ -4,17 +4,12 @@
 /////////////////////////////////////////////////////////////
 
 import Meta from 'gi://Meta';
-import GObject from 'gi://GObject';
 import { Logger } from '../utils/logger.js';
+import { SignalTracker } from './signalTracker.js';
 
 export interface WorkspaceData {
     tiled: Meta.Window[];
     exceptions: Meta.Window[];
-}
-
-interface SignalConnection {
-    object: GObject.Object;
-    id: number;
 }
 
 export interface WorkspaceCallbacks {
@@ -24,8 +19,9 @@ export interface WorkspaceCallbacks {
 
 export class WorkspaceTracker {
     private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
-    private _workspaceSignals: Map<string, SignalConnection>;
-    private _workspaceIds: WeakMap<Meta.Workspace, number>;
+    private _signals: SignalTracker;
+    // Connected workspaces and the stable id their signal keys use.
+    private _connectedWorkspaces: Map<Meta.Workspace, number>;
     private _nextWorkspaceId: number;
     private _logger: Logger;
     private _workspaceManager: Meta.WorkspaceManager | null;
@@ -33,24 +29,10 @@ export class WorkspaceTracker {
     constructor(logger: Logger) {
         this._logger = logger;
         this._workspaceWindows = new WeakMap();
-        this._workspaceSignals = new Map();
-        this._workspaceIds = new WeakMap();
+        this._signals = new SignalTracker(logger);
+        this._connectedWorkspaces = new Map();
         this._nextWorkspaceId = 1;
         this._workspaceManager = null;
-    }
-
-    // Stable identifier for a workspace object, independent of its mutable
-    // index(). GNOME reuses indices when workspaces are removed/reordered, so
-    // keying signal bookkeeping by index causes a new workspace to be mistaken
-    // for an already-tracked one. The workspace object itself is stable, so we
-    // assign each a monotonic id on first use.
-    private _idFor(workspace: Meta.Workspace): number {
-        let id = this._workspaceIds.get(workspace);
-        if (id === undefined) {
-            id = this._nextWorkspaceId++;
-            this._workspaceIds.set(workspace, id);
-        }
-        return id;
     }
 
     enable(workspaceManager: Meta.WorkspaceManager): void {
@@ -58,16 +40,8 @@ export class WorkspaceTracker {
     }
 
     disable(): void {
-        // Disconnect all workspace signals
-        for (const [key, sig] of this._workspaceSignals) {
-            try {
-                sig.object.disconnect(sig.id);
-                this._logger.debug(`Disconnected workspace signal: ${key}`);
-            } catch (e) {
-                this._logger.error(`Failed to disconnect workspace signal ${key}: ${e}`);
-            }
-        }
-        this._workspaceSignals.clear();
+        this._signals.disconnectAll();
+        this._connectedWorkspaces.clear();
 
         // Clear workspace data (WeakMap will be garbage collected)
         this._workspaceWindows = new WeakMap();
@@ -122,27 +96,23 @@ export class WorkspaceTracker {
     }
 
     connectToWorkspace(workspace: Meta.Workspace, callbacks: WorkspaceCallbacks): void {
-        const key = `workspace-${this._idFor(workspace)}`;
-
-        // Skip if already connected
-        if (this._workspaceSignals.has(`${key}-added`)) {
+        // Keyed by workspace object because GNOME reuses index() values
+        // after removing a workspace.
+        if (this._connectedWorkspaces.has(workspace)) {
             this._logger.debug(`Workspace ${workspace.index()} already connected, skipping`);
             return;
         }
 
-        this._logger.debug(`Connecting to workspace ${workspace.index()}`);
+        const id = this._nextWorkspaceId++;
+        this._connectedWorkspaces.set(workspace, id);
+        const key = `workspace-${id}`;
+        this._logger.debug(`Connecting to workspace ${workspace.index()} (id ${id})`);
 
-        // Connect window-added signal
-        const addedId = workspace.connect('window-added', (ws: Meta.Workspace, win: Meta.Window) => {
-            callbacks.onWindowAdded(ws, win);
-        });
-        this._workspaceSignals.set(`${key}-added`, { object: workspace, id: addedId });
+        this._signals.connect(`${key}-added`, workspace, 'window-added',
+            (ws: Meta.Workspace, win: Meta.Window) => callbacks.onWindowAdded(ws, win));
 
-        // Connect window-removed signal
-        const removedId = workspace.connect('window-removed', (ws: Meta.Workspace, win: Meta.Window) => {
-            callbacks.onWindowRemoved(ws, win);
-        });
-        this._workspaceSignals.set(`${key}-removed`, { object: workspace, id: removedId });
+        this._signals.connect(`${key}-removed`, workspace, 'window-removed',
+            (ws: Meta.Workspace, win: Meta.Window) => callbacks.onWindowRemoved(ws, win));
     }
 
     connectToAllWorkspaces(callbacks: WorkspaceCallbacks): void {
@@ -178,17 +148,15 @@ export class WorkspaceTracker {
             }
         }
 
-        for (const [key, sig] of [...this._workspaceSignals]) {
-            if (!live.has(sig.object as Meta.Workspace)) {
-                try {
-                    sig.object.disconnect(sig.id);
-                    this._logger.debug(`Pruned stale workspace signal: ${key}`);
-                } catch (e) {
-                    this._logger.error(`Failed to disconnect stale workspace signal ${key}: ${e}`);
-                }
-                this._workspaceSignals.delete(key);
+        for (const [workspace, id] of [...this._connectedWorkspaces]) {
+            if (live.has(workspace)) {
+                continue;
             }
+            this._signals.disconnect(`workspace-${id}-added`);
+            this._signals.disconnect(`workspace-${id}-removed`);
+            this._connectedWorkspaces.delete(workspace);
+            this._workspaceWindows.delete(workspace);
+            this._logger.debug(`Pruned removed workspace (id ${id})`);
         }
     }
-
 }
