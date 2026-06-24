@@ -19,6 +19,8 @@ export interface WindowStateData {
     prevWorkspaceIndex?: number;
     /** Registry ID for window ready timer */
     readyTimerId?: number;
+    /** Registry ID for the deferred workspace-change re-tracking timer */
+    wsChangeTimerId?: number;
 }
 
 /**

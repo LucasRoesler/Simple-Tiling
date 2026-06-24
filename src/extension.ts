@@ -445,7 +445,6 @@ class Tiler {
     private _exceptions: string[];
     private _interactionHandler: InteractionHandler;
     private _tileTimeoutId: number | null;
-    private _centerTimeoutIds: number[];
     private _windowOperationTimestamps: Map<number, number>;
     private _workspaceManager: Meta.WorkspaceManager | null;
 
@@ -471,7 +470,6 @@ class Tiler {
         this._interactionHandler = new InteractionHandler(this);
 
         this._tileTimeoutId = null;
-        this._centerTimeoutIds = [];
         this._windowOperationTimestamps = new Map();
         this._workspaceManager = null;
     }
@@ -542,7 +540,6 @@ class Tiler {
 
         // Reset state
         this._tileTimeoutId = null;
-        this._centerTimeoutIds = [];
 
         // Clear operation timestamps
         this._windowOperationTimestamps.clear();
@@ -732,8 +729,11 @@ class Tiler {
 
         // Defer adding to the new workspace — win.get_workspace() can transiently
         // return the wrong workspace during rapid switches. Re-verify after a
-        // short delay so the window settles on its actual destination.
-        this._timeoutRegistry.add(50, () => {
+        // short delay so the window settles on its actual destination. The timer
+        // id is tracked so _onWindowRemoved can cancel it if the window goes away
+        // before it fires.
+        const wsChangeTimerId = this._timeoutRegistry.add(50, () => {
+            WindowState.remove(win, 'wsChangeTimerId');
             if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
             const actualWorkspace = win.get_workspace();
             if (!actualWorkspace) return GLib.SOURCE_REMOVE;
@@ -756,6 +756,7 @@ class Tiler {
             this.queueTile();
             return GLib.SOURCE_REMOVE;
         }, `ws-change-${windowId}`);
+        WindowState.set(win, 'wsChangeTimerId', wsChangeTimerId);
 
         // Queue retiling for the active workspace (handles the removal)
         this.queueTile();
@@ -820,12 +821,9 @@ class Tiler {
     }
 
     _centerWindow(win: Meta.Window): void {
-        const registryId = this._timeoutRegistry.add(
+        this._timeoutRegistry.add(
             this._centeringDelay,
             () => {
-                const index = this._centerTimeoutIds.indexOf(registryId);
-                if (index > -1) this._centerTimeoutIds.splice(index, 1);
-
                 if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
                 if (!this._workspaceManager) return GLib.SOURCE_REMOVE; // Extension disabled
 
@@ -876,7 +874,6 @@ class Tiler {
             },
             'center-window'
         );
-        this._centerTimeoutIds.push(registryId);
     }
 
     _onWindowMinimizedStateChanged(): void {
@@ -997,6 +994,14 @@ class Tiler {
         if (readyTimerId !== undefined) {
             this._timeoutRegistry.remove(readyTimerId);
             WindowState.remove(win, 'readyTimerId');
+        }
+
+        // Cancel any pending deferred workspace-change re-tracking timer, so it
+        // can't re-insert this window into tracker state after removal.
+        const wsChangeTimerId = WindowState.get(win, 'wsChangeTimerId');
+        if (wsChangeTimerId !== undefined) {
+            this._timeoutRegistry.remove(wsChangeTimerId);
+            WindowState.remove(win, 'wsChangeTimerId');
         }
 
         // Remove from the specific workspace if provided
