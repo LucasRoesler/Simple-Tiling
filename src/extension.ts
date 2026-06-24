@@ -903,55 +903,67 @@ class Tiler {
             return;
         }
 
-        if (this._isTileable(win)) {
-            // Add to tiled list for this workspace
-            this._workspaceTracker.addWindow(workspace, win, false);
-
-            // Reorder if needed based on new-window-behavior setting
-            if (this.settings.get_string("new-window-behavior") === "primary") {
-                // Move newly added window to front
-                const index = data.tiled.indexOf(win);
-                if (index > 0) {
-                    data.tiled.splice(index, 1);
-                    data.tiled.unshift(win);
-                }
-            }
-
-            this._logger.debug(`Window added (tiled): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}, total tiled=${data.tiled.length}`);
-
-            const id = win.get_id();
-            // Only connect signals if not already connected
-            if (!this._signalIds.has(`unmanaged-${id}`)) {
-                this._signalIds.set(`unmanaged-${id}`, {
-                    object: win,
-                    id: win.connect("unmanaged", () =>
-                        this._onWindowRemoved(null, win)  // Pass null to indicate destruction
-                    ),
-                });
-                this._signalIds.set(`size-changed-${id}`, {
-                    object: win,
-                    id: win.connect("size-changed", () => {
-                        if (!this.grabbedWindow) this.queueTile();
-                    }),
-                });
-                this._signalIds.set(`minimized-${id}`, {
-                    object: win,
-                    id: win.connect("notify::minimized", () =>
-                        this._onWindowMinimizedStateChanged()
-                    ),
-                });
-
-                // Connect per-window workspace-changed signal
-                this._connectWindowWorkspaceSignal(win, workspace);
-            }
-
-            // Only queue tiling if tiling is enabled
-            if (this.settings.get_boolean('tiling-enabled')) {
-                this.queueTile();
-            }
-            // Update workspace fingerprint after adding window
-            this._workspaceTracker.updateFingerprint(workspace);
+        if (!this._isTileable(win)) {
+            // Log why the window was skipped
+            const type = win.get_window_type();
+            this._logger.debug(
+                `Window skipped (not tileable): "${winTitle}" [${wmClass}] ws=${wsIndex}` +
+                ` type=${type} minimized=${win.minimized}` +
+                ` allWorkspaces=${win.is_on_all_workspaces()}` +
+                ` attachedDialog=${win.is_attached_dialog()}` +
+                ` transient=${win.get_transient_for() !== null}` +
+                ` skipTaskbar=${win.skip_taskbar}`
+            );
+            return;
         }
+
+        // Add to tiled list for this workspace
+        this._workspaceTracker.addWindow(workspace, win, false);
+
+        // Reorder if needed based on new-window-behavior setting
+        if (this.settings.get_string("new-window-behavior") === "primary") {
+            // Move newly added window to front
+            const index = data.tiled.indexOf(win);
+            if (index > 0) {
+                data.tiled.splice(index, 1);
+                data.tiled.unshift(win);
+            }
+        }
+
+        this._logger.debug(`Window added (tiled): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}, total tiled=${data.tiled.length}`);
+
+        const id = win.get_id();
+        // Only connect signals if not already connected
+        if (!this._signalIds.has(`unmanaged-${id}`)) {
+            this._signalIds.set(`unmanaged-${id}`, {
+                object: win,
+                id: win.connect("unmanaged", () =>
+                    this._onWindowRemoved(null, win)  // Pass null to indicate destruction
+                ),
+            });
+            this._signalIds.set(`size-changed-${id}`, {
+                object: win,
+                id: win.connect("size-changed", () => {
+                    if (!this.grabbedWindow) this.queueTile();
+                }),
+            });
+            this._signalIds.set(`minimized-${id}`, {
+                object: win,
+                id: win.connect("notify::minimized", () =>
+                    this._onWindowMinimizedStateChanged()
+                ),
+            });
+
+            // Connect per-window workspace-changed signal
+            this._connectWindowWorkspaceSignal(win, workspace);
+        }
+
+        // Only queue tiling if tiling is enabled
+        if (this.settings.get_boolean('tiling-enabled')) {
+            this.queueTile();
+        }
+        // Update workspace fingerprint after adding window
+        this._workspaceTracker.updateFingerprint(workspace);
     }
 
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
