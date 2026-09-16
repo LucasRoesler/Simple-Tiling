@@ -6,7 +6,8 @@
   "version-name": "9.4.0",
   "shell-version": [
     "48",
-    "49"
+    "49",
+    "50"
   ],
   "settings-schema": "org.gnome.shell.extensions.simple-tiling.lucasroesler",
   "preferences_ui": "prefs.js",
