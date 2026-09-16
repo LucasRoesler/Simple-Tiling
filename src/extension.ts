@@ -878,15 +878,25 @@ class Tiler {
         this._tileTimeoutId = this._timeoutRegistry.add(
             this._tilingDelay,
             () => {
-                this._tileWindows();
-                this._tileInProgress = false;
-                this._tileTimeoutId = null;
+                // Reset the flags even if tiling throws, or every later
+                // queueTile() call returns at the in-progress guard.
+                try {
+                    this._tileWindows();
+                } catch (e) {
+                    this._logger.error(`Tiling failed: ${e}\n${e instanceof Error ? e.stack : ''}`);
+                } finally {
+                    this._tileInProgress = false;
+                    this._tileTimeoutId = null;
+                }
                 return GLib.SOURCE_REMOVE;
             },
             'tiling-queue'
         );
     }
 
+    // Runs for explicit user actions (swap keybindings, Force Retile), so it
+    // tiles even when respect-maximized-windows would hold back queueTile():
+    // the swaps have already reordered the list and must be applied.
     tileNow(): void {
         if (!this.settings.get_boolean('tiling-enabled')) return;
         if (!this._tileInProgress) {
@@ -946,17 +956,18 @@ class Tiler {
             // or when a window gets stuck without a monitor after monitor hotplug
             // (known issue with Electron/Wayland apps, see GNOME Shell #4713).
             // If the window is otherwise healthy, recover by moving it to the primary monitor.
-            if (win.get_monitor() < 0) {
-                if (primaryMonitor && this._isWindowReady(win)) {
-                    this._logger.debug(`  Recovering window with invalid monitor: "${win.get_title()}" -> monitor ${primaryMonitor.index}`);
-                    win.move_to_monitor(primaryMonitor.index);
-                } else {
-                    this._logger.debug(`  Skipping window (invalid monitor, not recoverable): "${win.get_title()}"`);
-                    return false;
-                }
+            if (win.get_monitor() < 0 && !(primaryMonitor && this._isWindowReady(win))) {
+                this._logger.debug(`  Skipping window (invalid monitor, not recoverable): "${win.get_title()}"`);
+                return false;
             }
             return true;
         });
+        for (const win of windowsToTile) {
+            if (primaryMonitor && win.get_monitor() < 0) {
+                this._logger.debug(`  Recovering window with invalid monitor: "${win.get_title()}" -> monitor ${primaryMonitor.index}`);
+                win.move_to_monitor(primaryMonitor.index);
+            }
+        }
         if (windowsToTile.length === 0) {
             this._logger.debug(`No windows to tile on workspace ${wsIndex}`);
             return;
