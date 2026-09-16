@@ -771,6 +771,9 @@ class Tiler {
                 ` transient=${win.get_transient_for() !== null}` +
                 ` skipTaskbar=${win.skip_taskbar}`
             );
+            if (win.minimized) {
+                this._watchForUnminimize(win);
+            }
             return;
         }
 
@@ -806,10 +809,27 @@ class Tiler {
         }
     }
 
+    // A window that is minimized when added gets no per-window signals, so
+    // nothing would re-check it once restored. Re-run the add on unminimize.
+    _watchForUnminimize(win: Meta.Window): void {
+        const key = `unminimize-${win.get_id()}`;
+        this._signals.connect(key, win, 'notify::minimized', () => {
+            if (win.minimized) return;
+            this._signals.disconnect(key);
+            const workspace = win.get_workspace();
+            if (workspace) {
+                this._onWindowAdded(workspace, win);
+            }
+        });
+    }
+
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
         const winTitle = win.get_title() || '(untitled)';
         const wmClass = win.get_wm_class() || '(unknown)';
         const wsIndex = workspace?.index() ?? -1;
+
+        // The destination workspace's window-added sets up a new watch if needed.
+        this._signals.disconnect(`unminimize-${win.get_id()}`);
 
         // Cancel any pending geometry wait timer for this window
         const readyTimerId = this._readyTimers.get(win);
