@@ -20,7 +20,6 @@ import Shell from 'gi://Shell';
 
 import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
-import * as WindowState from './managers/windowState.js';
 import { WorkspaceTracker } from './managers/workspaceTracker.js';
 import { computeLayout } from './layout/tilingLayout.js';
 
@@ -445,7 +444,9 @@ class Tiler {
     private _exceptions: string[];
     private _interactionHandler: InteractionHandler;
     private _tileTimeoutId: number | null;
-    private _windowOperationTimestamps: Map<number, number>;
+    // Pending window-ready poll per window, as TimeoutRegistry ids. Owned by
+    // this Tiler so disable() drops it together with the registry.
+    private _readyTimers: Map<Meta.Window, number>;
     private _workspaceManager: Meta.WorkspaceManager | null;
 
     constructor(extension: Extension) {
@@ -470,7 +471,7 @@ class Tiler {
         this._interactionHandler = new InteractionHandler(this);
 
         this._tileTimeoutId = null;
-        this._windowOperationTimestamps = new Map();
+        this._readyTimers = new Map();
         this._workspaceManager = null;
     }
 
@@ -545,12 +546,11 @@ class Tiler {
     disable(): void {
         // Clean up all timeouts managed by TimeoutRegistry
         this._timeoutRegistry.clearAll();
+        this._readyTimers.clear();
 
         // Reset state
         this._tileTimeoutId = null;
-
-        // Clear operation timestamps
-        this._windowOperationTimestamps.clear();
+        this._tileInProgress = false;
 
         this._interactionHandler.disable();
 
@@ -562,6 +562,7 @@ class Tiler {
 
         // Disable workspace tracker (cleans up workspace signals and data)
         this._workspaceTracker.disable();
+        this._workspaceManager = null;
     }
 
     _onSettingsChanged(): void {
@@ -628,148 +629,6 @@ class Tiler {
         return win !== null && win !== undefined && win.get_display() !== null;
     }
 
-    /**
-     * Check if a window operation should be skipped due to recent processing.
-     * Prevents infinite loops when windows trigger rapid successive events.
-     * @param windowId The window ID to check
-     * @param cooldownMs Cooldown period in milliseconds (default 1000ms)
-     * @returns true if operation should be skipped
-     */
-    _shouldSkipOperation(windowId: number, cooldownMs = 1000): boolean {
-        const lastTimestamp = this._windowOperationTimestamps.get(windowId);
-        if (lastTimestamp && (Date.now() - lastTimestamp) < cooldownMs) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Record that an operation was performed on a window.
-     * @param windowId The window ID that was processed
-     */
-    _recordOperation(windowId: number): void {
-        this._windowOperationTimestamps.set(windowId, Date.now());
-    }
-
-    /**
-     * Clear operation timestamp for a window (e.g., when window is removed).
-     * @param windowId The window ID to clear
-     */
-    _clearOperationTimestamp(windowId: number): void {
-        this._windowOperationTimestamps.delete(windowId);
-    }
-
-    _connectWindowWorkspaceSignal(win: Meta.Window, initialWorkspace: Meta.Workspace): void {
-        const windowId = win.get_id();
-
-        // Don't connect if already connected
-        if (WindowState.has(win, 'workspaceSignalId')) return;
-
-        // Store initial workspace index in WindowState for change detection
-        WindowState.set(win, 'prevWorkspaceIndex', initialWorkspace.index());
-
-        const signalId = win.connect('workspace-changed', () => {
-            this._onWindowWorkspaceChanged(win);
-        });
-
-        WindowState.set(win, 'workspaceSignalId', signalId);
-        this._logger.debug(`Connected workspace-changed signal for window ${windowId}`);
-    }
-
-    _disconnectWindowWorkspaceSignal(win: Meta.Window): void {
-        const windowId = win.get_id();
-        const signalId = WindowState.get(win, 'workspaceSignalId');
-
-        if (signalId !== undefined) {
-            try {
-                if (win && win.get_display()) {
-                    win.disconnect(signalId);
-                }
-                this._logger.debug(`Disconnected workspace-changed signal for window ${windowId}`);
-            } catch {
-                // Window already destroyed, signal auto-disconnected
-                this._logger.debug(`Window ${windowId} signal already disconnected (window destroyed)`);
-            }
-            WindowState.remove(win, 'workspaceSignalId');
-        }
-
-        // WeakMap auto-cleans when window is garbage collected
-        WindowState.remove(win, 'prevWorkspaceIndex');
-    }
-
-    _onWindowWorkspaceChanged(win: Meta.Window): void {
-        if (!win || !win.get_display()) return;
-        if (!this._workspaceManager) return; // Extension disabled
-
-        const windowId = win.get_id();
-        const newWorkspace = win.get_workspace();
-        if (!newWorkspace) return;  // Window being destroyed
-
-        const prevWorkspaceIndex = WindowState.get(win, 'prevWorkspaceIndex');
-        const newWorkspaceIndex = newWorkspace.index();
-
-        // Skip if workspace hasn't actually changed
-        if (prevWorkspaceIndex === newWorkspaceIndex) return;
-
-        // Skip if this window was recently processed (prevents rapid event loops)
-        if (this._shouldSkipOperation(windowId, 500)) {
-            this._logger.debug(`Skipping workspace change for window ${windowId} - recently processed`);
-            return;
-        }
-
-        const winTitle = win.get_title() || '(untitled)';
-        this._logger.debug(`Window "${winTitle}" moved from workspace ${prevWorkspaceIndex} to ${newWorkspaceIndex}`);
-
-        // Remove from previous workspace tracking
-        if (prevWorkspaceIndex !== undefined && prevWorkspaceIndex >= 0) {
-            const prevWorkspace = this._workspaceManager.get_workspace_by_index(prevWorkspaceIndex);
-            if (prevWorkspace) {
-                this._workspaceTracker.removeWindow(prevWorkspace, win);
-                this._logger.debug(`Removed from workspace ${prevWorkspaceIndex}`);
-            }
-        }
-
-        // Update stored workspace index
-        WindowState.set(win, 'prevWorkspaceIndex', newWorkspaceIndex);
-
-        // Record this operation to prevent rapid re-processing
-        this._recordOperation(windowId);
-
-        // Defer adding to the new workspace — win.get_workspace() can transiently
-        // return the wrong workspace during rapid switches. Re-verify after a
-        // short delay so the window settles on its actual destination. The timer
-        // id is tracked so _onWindowRemoved can cancel it if the window goes away
-        // before it fires.
-        const wsChangeTimerId = this._timeoutRegistry.add(50, () => {
-            WindowState.remove(win, 'wsChangeTimerId');
-            if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
-            const actualWorkspace = win.get_workspace();
-            if (!actualWorkspace) return GLib.SOURCE_REMOVE;
-
-            const actualIndex = actualWorkspace.index();
-            const data = this._workspaceTracker.getWorkspaceData(actualWorkspace);
-
-            if (!data.tiled.includes(win) && !data.exceptions.includes(win)) {
-                if (this._isException(win)) {
-                    this._workspaceTracker.addWindow(actualWorkspace, win, true);
-                } else if (this._isTileable(win)) {
-                    this._workspaceTracker.addWindow(actualWorkspace, win, false);
-                    this._logger.debug(`Added to workspace ${actualIndex} tiled list (deferred)`);
-                }
-            }
-
-            // Update prevWorkspaceIndex in case it changed during the delay
-            WindowState.set(win, 'prevWorkspaceIndex', actualIndex);
-
-            this.queueTile();
-            return GLib.SOURCE_REMOVE;
-        }, `ws-change-${windowId}`);
-        WindowState.set(win, 'wsChangeTimerId', wsChangeTimerId);
-
-        // Queue retiling for the active workspace (handles the removal)
-        this.queueTile();
-    }
-
     _waitForWindowReady(
         win: Meta.Window,
         _workspace: Meta.Workspace,
@@ -780,10 +639,10 @@ class Tiler {
         const pollInterval = 50; // ms
 
         // Cancel any existing timer for this window
-        const existingRegistryId = WindowState.get(win, 'readyTimerId');
+        const existingRegistryId = this._readyTimers.get(win);
         if (existingRegistryId !== undefined) {
             this._timeoutRegistry.remove(existingRegistryId);
-            WindowState.remove(win, 'readyTimerId');
+            this._readyTimers.delete(win);
         }
 
         // If already ready, call immediately
@@ -800,32 +659,32 @@ class Tiler {
             // Window was destroyed while waiting - clean up and exit
             if (!win || !win.get_display()) {
                 this._logger.debug(`Window ${windowId} destroyed while waiting for geometry`);
-                WindowState.remove(win, 'readyTimerId');
+                this._readyTimers.delete(win);
                 return GLib.SOURCE_REMOVE;
             }
 
             if (this._isWindowReady(win)) {
                 this._logger.debug(`Window ready after ${attempts} attempts: "${win.get_title()}"`);
-                WindowState.remove(win, 'readyTimerId');
+                this._readyTimers.delete(win);
                 callback();
                 return GLib.SOURCE_REMOVE;
             }
 
             if (attempts >= maxAttempts) {
                 this._logger.debug(`Window geometry timeout after ${attempts} attempts: "${win.get_title()}" - skipping`);
-                WindowState.remove(win, 'readyTimerId');
+                this._readyTimers.delete(win);
                 // Don't proceed on timeout - window may not be ready for tiling
                 return GLib.SOURCE_REMOVE;
             }
 
             // Need to reschedule for next check
             const newRegistryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
-            WindowState.set(win, 'readyTimerId', newRegistryId);
+            this._readyTimers.set(win, newRegistryId);
             return GLib.SOURCE_REMOVE;
         };
 
         const registryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
-        WindowState.set(win, 'readyTimerId', registryId);
+        this._readyTimers.set(win, registryId);
     }
 
     _centerWindow(win: Meta.Window): void {
@@ -980,9 +839,6 @@ class Tiler {
                     this._onWindowMinimizedStateChanged()
                 ),
             });
-
-            // Connect per-window workspace-changed signal
-            this._connectWindowWorkspaceSignal(win, workspace);
         }
 
         // Only queue tiling if tiling is enabled
@@ -992,24 +848,15 @@ class Tiler {
     }
 
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
-        const windowId = win.get_id();
         const winTitle = win.get_title() || '(untitled)';
         const wmClass = win.get_wm_class() || '(unknown)';
         const wsIndex = workspace?.index() ?? -1;
 
         // Cancel any pending geometry wait timer for this window
-        const readyTimerId = WindowState.get(win, 'readyTimerId');
+        const readyTimerId = this._readyTimers.get(win);
         if (readyTimerId !== undefined) {
             this._timeoutRegistry.remove(readyTimerId);
-            WindowState.remove(win, 'readyTimerId');
-        }
-
-        // Cancel any pending deferred workspace-change re-tracking timer, so it
-        // can't re-insert this window into tracker state after removal.
-        const wsChangeTimerId = WindowState.get(win, 'wsChangeTimerId');
-        if (wsChangeTimerId !== undefined) {
-            this._timeoutRegistry.remove(wsChangeTimerId);
-            WindowState.remove(win, 'wsChangeTimerId');
+            this._readyTimers.delete(win);
         }
 
         // Remove from the specific workspace if provided
@@ -1023,9 +870,8 @@ class Tiler {
             const windowType = wasInTiled ? 'tiled' : (wasInExceptions ? 'exception' : 'unknown');
             this._logger.debug(`Window removed (${windowType}): "${winTitle}" [${wmClass}] ws=${wsIndex}, remaining tiled=${data.tiled.length}`);
         } else {
-            // Window is being destroyed, remove from all workspaces
-            // Since we're using WeakMap, we can't iterate over all workspaces
-            // But the window signals will be disconnected below
+            // Mutter also emits window-removed on the window's workspace during
+            // unmanage, which removes it from tracker data.
             this._logger.debug(`Window destroyed: "${winTitle}" [${wmClass}]`);
         }
 
@@ -1045,12 +891,6 @@ class Tiler {
                     }
                 }
             });
-
-            // Disconnect per-window workspace-changed signal
-            this._disconnectWindowWorkspaceSignal(win);
-
-            // Clear operation timestamp
-            this._clearOperationTimestamp(windowId);
         }
 
         this.queueTile();
