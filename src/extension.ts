@@ -89,6 +89,7 @@ class InteractionHandler {
     private _wmKeysToDisable: string[];
     private _savedWmShortcuts: { [key: string]: GLib.Variant };
     private _signals: SignalTracker;
+    private _shortcutsBound: boolean;
 
     constructor(tiler: Tiler) {
         this.tiler = tiler;
@@ -98,6 +99,7 @@ class InteractionHandler {
         this._wmKeysToDisable = [];
         this._savedWmShortcuts = {};
         this._signals = new SignalTracker();
+        this._shortcutsBound = false;
     }
 
     enable(): void {
@@ -108,7 +110,8 @@ class InteractionHandler {
                 this._wmSettings.set_value(k, new GLib.Variant('as', [])));
         }
 
-        this._bindAllShortcuts();
+        // Shortcuts are bound by setShortcutsEnabled(), which the extension
+        // calls according to the lock state.
         this._signals.connect('settings-changed', this._settings, 'changed',
             () => this._onSettingsChanged());
 
@@ -133,12 +136,22 @@ class InteractionHandler {
             });
         }
 
-        this._unbindAllShortcuts();
+        this.setShortcutsEnabled(false);
 
         this._signals.disconnectAll();
     }
 
+    setShortcutsEnabled(enabled: boolean): void {
+        if (enabled === this._shortcutsBound) return;
+        if (enabled) {
+            this._bindAllShortcuts();
+        } else {
+            this._unbindAllShortcuts();
+        }
+    }
+
     _bindAllShortcuts(): void {
+        this._shortcutsBound = true;
         for (const [key, handler] of Object.entries(KEYBINDINGS)) {
             Main.wm.addKeybinding(
                 key,
@@ -151,12 +164,15 @@ class InteractionHandler {
     }
 
     _unbindAllShortcuts(): void {
+        this._shortcutsBound = false;
         for (const key in KEYBINDINGS) {
             Main.wm.removeKeybinding(key);
         }
     }
 
     _onSettingsChanged(): void {
+        // Shortcuts stay unbound while the screen is locked.
+        if (!this._shortcutsBound) return;
         this._unbindAllShortcuts();
         this._bindAllShortcuts();
     }
@@ -354,10 +370,15 @@ const TilingToggle = GObject.registerClass(
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             const settingsItem = this.menu.addAction(_('Settings'),
                 () => this._extensionObject.openPreferences());
-
-            // Ensure settings are unavailable when screen is locked
-            settingsItem.visible = Main.sessionMode.allowSettings;
             this.menu._settingsActions[extensionObject.uuid] = settingsItem;
+        }
+
+        // The toggle is recreated on every unlock; release the settings
+        // binding so each cycle does not leave one behind.
+        destroy(): void {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            Gio.Settings.unbind(this as any, 'checked');
+            super.destroy();
         }
     });
 
@@ -903,6 +924,10 @@ class Tiler {
         );
     }
 
+    setShortcutsEnabled(enabled: boolean): void {
+        this._interactionHandler.setShortcutsEnabled(enabled);
+    }
+
     clearGrab(): void {
         this.grabbedWindow = null;
         this.grabOp = Meta.GrabOp.NONE;
@@ -1043,40 +1068,68 @@ export default class SimpleTilingExtension extends Extension {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private _indicator?: any;
     private _dbus?: Gio.DBusExportedObject;
+    private _signals?: SignalTracker;
 
     override enable(): void {
         this.tiler = new Tiler(this);
         this.tiler.enable();
 
-        // Create and add Quick Settings indicator
-        this._indicator = new SimpleTilingIndicator(this);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
-
-        // Export D-Bus interface exactly like focused-window-dbus
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(SimpleTilingIface, this);
-        this._dbus.export(
-            Gio.DBus.session,
-            '/org/gnome/Shell/Extensions/SimpleTiling'
-        );
+        this._signals = new SignalTracker();
+        this._signals.connect('session-mode', Main.sessionMode, 'updated',
+            () => this._syncLockState());
+        this._syncLockState();
     }
 
+    // The extension declares the unlock-dialog session mode so the tiler keeps
+    // its window order across a screen lock. Without it, GNOME Shell disables
+    // the extension on every lock and enable() rebuilds the order on unlock.
+    // While locked, _syncLockState removes the keybindings, the Quick Settings
+    // toggle and the D-Bus API. disable() tears everything down.
     override disable(): void {
-        // Unexport D-Bus interface
+        this._signals?.disconnectAll();
+        this._signals = undefined;
+
+        this._removeUserInterfaces();
+
+        if (this.tiler) {
+            this.tiler.disable();
+            this.tiler = undefined;
+        }
+    }
+
+    _syncLockState(): void {
+        const locked: boolean = Main.sessionMode.isLocked;
+        this.tiler?.setShortcutsEnabled(!locked);
+        if (locked) {
+            this._removeUserInterfaces();
+        } else {
+            this._addUserInterfaces();
+        }
+    }
+
+    _addUserInterfaces(): void {
+        if (!this._indicator) {
+            this._indicator = new SimpleTilingIndicator(this);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
+        }
+
+        if (!this._dbus) {
+            this._dbus = Gio.DBusExportedObject.wrapJSObject(SimpleTilingIface, this);
+            this._dbus.export(Gio.DBus.session, '/org/gnome/Shell/Extensions/SimpleTiling');
+        }
+    }
+
+    _removeUserInterfaces(): void {
         if (this._dbus) {
             this._dbus.flush();
             this._dbus.unexport();
-            delete this._dbus;
+            this._dbus = undefined;
         }
 
         if (this._indicator) {
             this._indicator.destroy();
             this._indicator = undefined;
-        }
-
-        if (this.tiler) {
-            this.tiler.disable();
-            this.tiler = undefined;
         }
     }
 
