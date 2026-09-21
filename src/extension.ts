@@ -76,6 +76,11 @@ function getPointerXY(): [number, number] {
     return [0, 0];
 }
 
+// Keyboard moves are excluded: the swap target is the window under the pointer.
+function isPointerMove(op: Meta.GrabOp): boolean {
+    return op === Meta.GrabOp.MOVING || op === Meta.GrabOp.MOVING_UNCONSTRAINED;
+}
+
 // ── INTERACTIONHANDLER ───────────────────────────────────
 class InteractionHandler {
     private tiler: Tiler;
@@ -84,6 +89,7 @@ class InteractionHandler {
     private _wmKeysToDisable: string[];
     private _savedWmShortcuts: { [key: string]: GLib.Variant };
     private _signals: SignalTracker;
+    private _grabOp: Meta.GrabOp;
 
     constructor(tiler: Tiler) {
         this.tiler = tiler;
@@ -93,6 +99,7 @@ class InteractionHandler {
         this._wmKeysToDisable = [];
         this._savedWmShortcuts = {};
         this._signals = new SignalTracker();
+        this._grabOp = Meta.GrabOp.NONE;
     }
 
     enable(): void {
@@ -108,9 +115,10 @@ class InteractionHandler {
             () => this._onSettingsChanged());
 
         this._signals.connect('grab-op-begin', global.display, 'grab-op-begin',
-            (_: unknown, __: unknown, win: Meta.Window) => {
+            (_display: Meta.Display, win: Meta.Window, op: Meta.GrabOp) => {
                 if (this.tiler.windows.includes(win)) {
                     this.tiler.grabbedWindow = win;
+                    this._grabOp = op;
                 }
             });
         this._signals.connect('grab-op-end', global.display, 'grab-op-end',
@@ -250,7 +258,10 @@ class InteractionHandler {
     _onGrabEnd(): void {
         const grabbed = this.tiler.grabbedWindow;
         if (!grabbed) return;
-        const tgt = this._findTargetUnderPointer(grabbed);
+        // Only a pointer move is a drag-to-swap. A resize would otherwise swap
+        // too: a widened window overlaps its neighbour, and the overlap
+        // fallback in _findTargetUnderPointer picks it.
+        const tgt = isPointerMove(this._grabOp) ? this._findTargetUnderPointer(grabbed) : null;
         if (tgt) {
             const a = this.tiler.windows.indexOf(grabbed);
             const b = this.tiler.windows.indexOf(tgt);
@@ -263,6 +274,7 @@ class InteractionHandler {
         }
         this.tiler.queueTile();
         this.tiler.grabbedWindow = null;
+        this._grabOp = Meta.GrabOp.NONE;
     }
 
     _findTargetUnderPointer(exclude: Meta.Window): Meta.Window | null {
