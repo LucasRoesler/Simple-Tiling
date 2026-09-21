@@ -76,7 +76,7 @@ function getPointerXY(): [number, number] {
     return [0, 0];
 }
 
-// Keyboard moves are excluded: the swap target is the window under the pointer.
+// Drag-to-swap targets the window under the pointer, so only pointer moves qualify.
 function isPointerMove(op: Meta.GrabOp): boolean {
     return op === Meta.GrabOp.MOVING || op === Meta.GrabOp.MOVING_UNCONSTRAINED;
 }
@@ -89,7 +89,6 @@ class InteractionHandler {
     private _wmKeysToDisable: string[];
     private _savedWmShortcuts: { [key: string]: GLib.Variant };
     private _signals: SignalTracker;
-    private _grabOp: Meta.GrabOp;
 
     constructor(tiler: Tiler) {
         this.tiler = tiler;
@@ -99,7 +98,6 @@ class InteractionHandler {
         this._wmKeysToDisable = [];
         this._savedWmShortcuts = {};
         this._signals = new SignalTracker();
-        this._grabOp = Meta.GrabOp.NONE;
     }
 
     enable(): void {
@@ -118,11 +116,11 @@ class InteractionHandler {
             (_display: Meta.Display, win: Meta.Window, op: Meta.GrabOp) => {
                 if (this.tiler.windows.includes(win)) {
                     this.tiler.grabbedWindow = win;
-                    this._grabOp = op;
+                    this.tiler.grabOp = op;
                 }
             });
         this._signals.connect('grab-op-end', global.display, 'grab-op-end',
-            () => this._onGrabEnd());
+            (_display: Meta.Display, win: Meta.Window) => this._onGrabEnd(win));
     }
 
     disable(): void {
@@ -255,26 +253,36 @@ class InteractionHandler {
         return best;
     }
 
-    _onGrabEnd(): void {
+    _onGrabEnd(win: Meta.Window): void {
         const grabbed = this.tiler.grabbedWindow;
-        if (!grabbed) return;
-        // Only a pointer move is a drag-to-swap. A resize would otherwise swap
-        // too: a widened window overlaps its neighbour, and the overlap
-        // fallback in _findTargetUnderPointer picks it.
-        const tgt = isPointerMove(this._grabOp) ? this._findTargetUnderPointer(grabbed) : null;
-        if (tgt) {
-            const a = this.tiler.windows.indexOf(grabbed);
-            const b = this.tiler.windows.indexOf(tgt);
-            const winA = this.tiler.windows[a];
-            const winB = this.tiler.windows[b];
-            if (winA && winB) {
-                [this.tiler.windows[a], this.tiler.windows[b]] =
-                    [winB, winA];
-            }
+        const op = this.tiler.grabOp;
+        this.tiler.clearGrab();
+        if (!grabbed || grabbed !== win) return;
+
+        if (this._swapWithWindowUnderPointer(grabbed, op)) {
+            // Apply the new order even where queueTile() would hold back,
+            // as the swap keybindings do.
+            this.tiler.tileNow();
+        } else {
+            this.tiler.queueTile();
         }
-        this.tiler.queueTile();
-        this.tiler.grabbedWindow = null;
-        this._grabOp = Meta.GrabOp.NONE;
+    }
+
+    _swapWithWindowUnderPointer(grabbed: Meta.Window, op: Meta.GrabOp): boolean {
+        // Resizes never swap: a widened window overlaps its neighbour, and the
+        // overlap fallback in _findTargetUnderPointer would pick it.
+        if (!isPointerMove(op) || !this.tiler.settings.get_boolean('tiling-enabled')) {
+            return false;
+        }
+        const tgt = this._findTargetUnderPointer(grabbed);
+        if (!tgt) return false;
+        const a = this.tiler.windows.indexOf(grabbed);
+        const b = this.tiler.windows.indexOf(tgt);
+        const winA = this.tiler.windows[a];
+        const winB = this.tiler.windows[b];
+        if (!winA || !winB) return false;
+        [this.tiler.windows[a], this.tiler.windows[b]] = [winB, winA];
+        return true;
     }
 
     _findTargetUnderPointer(exclude: Meta.Window): Meta.Window | null {
@@ -282,7 +290,7 @@ class InteractionHandler {
         const wins = global.get_window_actors()
             .map(a => a.meta_window)
             .filter((w): w is Meta.Window => w !== null && w !== undefined && w !== exclude &&
-                this.tiler.windows.includes(w) && (() => {
+                !w.minimized && this.tiler.windows.includes(w) && (() => {
                     const f = w.get_frame_rect();
                     return x >= f.x && x < f.x + f.width &&
                         y >= f.y && y < f.y + f.height;
@@ -296,7 +304,7 @@ class InteractionHandler {
         let max = 0;
         const sRect = exclude.get_frame_rect();
         for (const w of this.tiler.windows) {
-            if (w === exclude) continue;
+            if (w === exclude || w.minimized) continue;
             const r = w.get_frame_rect();
             const ovX = Math.max(0, Math.min(sRect.x + sRect.width, r.x + r.width) - Math.max(sRect.x, r.x));
             const ovY = Math.max(0, Math.min(sRect.y + sRect.height, r.y + r.height) - Math.max(sRect.y, r.y));
@@ -425,6 +433,7 @@ const SimpleTilingIndicator = GObject.registerClass(
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
     public grabbedWindow: Meta.Window | null;
+    public grabOp: Meta.GrabOp;
     public settings: Gio.Settings;
 
     private _extension: Extension;
@@ -454,6 +463,7 @@ class Tiler {
         this._workspaceTracker = new WorkspaceTracker(this._logger);
 
         this.grabbedWindow = null;
+        this.grabOp = Meta.GrabOp.NONE;
         this._signals = new SignalTracker(this._logger);
         this._tileInProgress = false;
 
@@ -871,6 +881,9 @@ class Tiler {
             ["unmanaged", "size-changed", "minimized"].forEach((prefix) => {
                 this._signals.disconnect(`${prefix}-${win.get_id()}`);
             });
+            // A window destroyed mid-grab may never get grab-op-end, and a
+            // stale grabbedWindow suppresses every size-changed retile.
+            if (win === this.grabbedWindow) this.clearGrab();
         }
 
         this.queueTile();
@@ -924,6 +937,11 @@ class Tiler {
             },
             'tiling-queue'
         );
+    }
+
+    clearGrab(): void {
+        this.grabbedWindow = null;
+        this.grabOp = Meta.GrabOp.NONE;
     }
 
     // Runs for explicit user actions (swap keybindings, Force Retile), so it
