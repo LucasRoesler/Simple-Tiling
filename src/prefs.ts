@@ -13,7 +13,7 @@ import GLib from 'gi://GLib';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 export default class SimpleTilingPrefs extends ExtensionPreferences {
-    async fillPreferencesWindow(window: Adw.PreferencesWindow): Promise<void> {
+    override async fillPreferencesWindow(window: Adw.PreferencesWindow): Promise<void> {
         const settings = this.getSettings();
         const page = new Adw.PreferencesPage();
         window.add(page);
@@ -220,7 +220,9 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             // Add custom exceptions (removable)
             for (const exception of customExceptions) {
                 // Skip if it's also in defaults (already shown above)
-                if (defaultExceptions.includes(exception)) continue;
+                if (defaultExceptions.includes(exception)) {
+                    continue;
+                }
 
                 const row = new Adw.ActionRow({
                     title: exception,
@@ -324,7 +326,9 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
                         const identifier = (win.wmClass || win.appId || '').toLowerCase();
 
                         // Skip if already added or empty
-                        if (!identifier || addedIdentifiers.has(identifier)) continue;
+                        if (!identifier || addedIdentifiers.has(identifier)) {
+                            continue;
+                        }
                         addedIdentifiers.add(identifier);
 
                         const row = new Adw.ActionRow({
@@ -530,7 +534,7 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         // Update when settings change
         settings.connect(`changed::${key}`, () => {
             const newShortcuts = settings.get_strv(key);
-            const newShortcut = newShortcuts.length > 0 ? newShortcuts[0] : '';
+            const newShortcut = newShortcuts.length > 0 ? (newShortcuts[0] ?? '') : '';
             shortcutLabel.set_accelerator(newShortcut);
             clearButton.set_sensitive(newShortcut !== '');
         });
@@ -561,7 +565,7 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
 
         // Create event controller for key capture
         const keyController = new Gtk.EventControllerKey();
-        keyController.connect('key-pressed', (controller, keyval, keycode, state) => {
+        keyController.connect('key-pressed', (_controller, keyval, _keycode, state) => {
             // Ignore single modifier keys
             if (keyval === Gdk.KEY_Shift_L || keyval === Gdk.KEY_Shift_R ||
                 keyval === Gdk.KEY_Control_L || keyval === Gdk.KEY_Control_R ||

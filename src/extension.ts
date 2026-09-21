@@ -18,6 +18,12 @@ import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 
+import { Logger } from './utils/logger.js';
+import { TimeoutRegistry } from './managers/timeoutRegistry.js';
+import { WorkspaceTracker } from './managers/workspaceTracker.js';
+import { SignalTracker } from './managers/signalTracker.js';
+import { computeLayout } from './layout/tilingLayout.js';
+
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
 
@@ -36,7 +42,7 @@ const SimpleTilingIface = `
   </interface>
 </node>`;
 
-const KEYBINDINGS: { [key: string]: (self: any) => void } = {
+const KEYBINDINGS: { [key: string]: (self: InteractionHandler) => void } = {
     'swap-primary-window': (self) => self._swapWithPrimary(),
     'swap-left-window': (self) => self._swapInDirection('left'),
     'swap-right-window': (self) => self._swapInDirection('right'),
@@ -48,38 +54,6 @@ const KEYBINDINGS: { [key: string]: (self: any) => void } = {
     'focus-down': (self) => self._focusInDirection('down'),
 };
 
-// ── LOGGER ────────────────────────────────────────────────
-class Logger {
-    private settings: Gio.Settings;
-
-    constructor(settings: Gio.Settings) {
-        this.settings = settings;
-    }
-
-    private _isEnabled(): boolean {
-        return this.settings.get_boolean('debug-logging');
-    }
-
-    private _log(level: string, message: string): void {
-        if (!this._isEnabled()) return;
-        const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
-        const output = `[SimpleTiling ${timestamp}] ${level}: ${message}`;
-        console.log(output);
-    }
-
-    debug(message: string): void {
-        this._log('DEBUG', message);
-    }
-
-    info(message: string): void {
-        this._log('INFO', message);
-    }
-
-    error(message: string): void {
-        this._log('ERROR', message);
-    }
-}
-
 // ── HELPER‑FUNCTION ────────────────────────────────────────
 function getPointerXY(): [number, number] {
     if (global.get_pointer) {
@@ -90,8 +64,9 @@ function getPointerXY(): [number, number] {
     const ev = Clutter.get_current_event();
     if (ev) {
         const coords = ev.get_coords();
-        if (Array.isArray(coords))
+        if (Array.isArray(coords)) {
             return coords;
+        }
     }
 
     // TODO: Clutter 17 removed Seat.get_pointer(). The fallback to
@@ -101,12 +76,6 @@ function getPointerXY(): [number, number] {
     return [0, 0];
 }
 
-// ── TYPE DEFINITIONS ────────────────────────────────────────
-interface SignalConnection {
-    object: any;
-    id: number;
-}
-
 // ── INTERACTIONHANDLER ───────────────────────────────────
 class InteractionHandler {
     private tiler: Tiler;
@@ -114,8 +83,7 @@ class InteractionHandler {
     private _wmSettings: Gio.Settings;
     private _wmKeysToDisable: string[];
     private _savedWmShortcuts: { [key: string]: GLib.Variant };
-    private _grabOpIds: number[];
-    private _settingsChangedId: number | null;
+    private _signals: SignalTracker;
 
     constructor(tiler: Tiler) {
         this.tiler = tiler;
@@ -124,46 +92,44 @@ class InteractionHandler {
 
         this._wmKeysToDisable = [];
         this._savedWmShortcuts = {};
-        this._grabOpIds = [];
-        this._settingsChangedId = null;
+        this._signals = new SignalTracker();
     }
 
     enable(): void {
         this._prepareWmShortcuts();
 
-        if (this._wmKeysToDisable.length)
+        if (this._wmKeysToDisable.length) {
             this._wmKeysToDisable.forEach(k =>
                 this._wmSettings.set_value(k, new GLib.Variant('as', [])));
+        }
 
         this._bindAllShortcuts();
-        this._settingsChangedId =
-            this._settings.connect('changed', () => this._onSettingsChanged());
+        this._signals.connect('settings-changed', this._settings, 'changed',
+            () => this._onSettingsChanged());
 
-        this._grabOpIds.push(
-            global.display.connect('grab-op-begin',
-                (_: any, __: any, win: Meta.Window) => {
-                    if (this.tiler.windows.includes(win))
-                        this.tiler.grabbedWindow = win;
-                })
-        );
-        this._grabOpIds.push(
-            global.display.connect('grab-op-end', () => this._onGrabEnd())
-        );
+        this._signals.connect('grab-op-begin', global.display, 'grab-op-begin',
+            (_: unknown, __: unknown, win: Meta.Window) => {
+                if (this.tiler.windows.includes(win)) {
+                    this.tiler.grabbedWindow = win;
+                }
+            });
+        this._signals.connect('grab-op-end', global.display, 'grab-op-end',
+            () => this._onGrabEnd());
     }
 
     disable(): void {
-        if (this._wmKeysToDisable.length)
-            this._wmKeysToDisable.forEach(k =>
-                this._wmSettings.set_value(k, this._savedWmShortcuts[k]));
+        if (this._wmKeysToDisable.length) {
+            this._wmKeysToDisable.forEach(k => {
+                const savedValue = this._savedWmShortcuts[k];
+                if (savedValue) {
+                    this._wmSettings.set_value(k, savedValue);
+                }
+            });
+        }
 
         this._unbindAllShortcuts();
 
-        if (this._settingsChangedId) {
-            this._settings.disconnect(this._settingsChangedId);
-            this._settingsChangedId = null;
-        }
-        this._grabOpIds.forEach(id => global.display.disconnect(id));
-        this._grabOpIds = [];
+        this._signals.disconnectAll();
     }
 
     _bindAllShortcuts(): void {
@@ -199,9 +165,9 @@ class InteractionHandler {
 
         // Only disable tiling shortcuts since they conflict with our swap shortcuts
         // Maximize shortcuts are now compatible with our respect-maximized-windows feature
-        if (schema.has_key('toggle-tiled-left'))
+        if (schema.has_key('toggle-tiled-left')) {
             keys.push('toggle-tiled-left', 'toggle-tiled-right');
-        else {
+        } else {
             add('tile-left'); add('tile-right');
         }
 
@@ -225,8 +191,15 @@ class InteractionHandler {
         const foc = global.display.get_focus_window();
         if (!foc || !w.includes(foc)) return;
         const idx = w.indexOf(foc);
-        if (idx > 0) [w[0], w[idx]] = [w[idx], w[0]];
-        else[w[0], w[1]] = [w[1], w[0]];
+        const w0 = w[0];
+        const wIdx = w[idx];
+        const w1 = w[1];
+        if (!w0 || !w1 || !wIdx) return;
+        if (idx > 0) {
+            [w[0], w[idx]] = [wIdx, w0];
+        } else {
+            [w[0], w[1]] = [w1, w0];
+        }
         this.tiler.tileNow();
         w[0]?.activate(global.get_current_time());
     }
@@ -236,14 +209,18 @@ class InteractionHandler {
         if (!src || !this.tiler.windows.includes(src)) return;
         let tgt = null;
         const idx = this.tiler.windows.indexOf(src);
-        if (idx === 0 && direction === 'right' && this.tiler.windows.length > 1)
+        if (idx === 0 && direction === 'right' && this.tiler.windows.length > 1) {
             tgt = this.tiler.windows[1];
-        else
+        } else {
             tgt = this._findTargetInDirection(src, direction);
+        }
         if (!tgt) return;
         const tidx = this.tiler.windows.indexOf(tgt);
+        const winIdx = this.tiler.windows[idx];
+        const winTidx = this.tiler.windows[tidx];
+        if (!winIdx || !winTidx) return;
         [this.tiler.windows[idx], this.tiler.windows[tidx]] =
-            [this.tiler.windows[tidx], this.tiler.windows[idx]];
+            [winTidx, winIdx];
         this.tiler.tileNow();
         src.activate(global.get_current_time());
     }
@@ -277,8 +254,12 @@ class InteractionHandler {
         if (tgt) {
             const a = this.tiler.windows.indexOf(grabbed);
             const b = this.tiler.windows.indexOf(tgt);
-            [this.tiler.windows[a], this.tiler.windows[b]] =
-                [this.tiler.windows[b], this.tiler.windows[a]];
+            const winA = this.tiler.windows[a];
+            const winB = this.tiler.windows[b];
+            if (winA && winB) {
+                [this.tiler.windows[a], this.tiler.windows[b]] =
+                    [winB, winA];
+            }
         }
         this.tiler.queueTile();
         this.tiler.grabbedWindow = null;
@@ -288,15 +269,20 @@ class InteractionHandler {
         const [x, y] = getPointerXY();
         const wins = global.get_window_actors()
             .map(a => a.meta_window)
-            .filter(w => w && w !== exclude &&
+            .filter((w): w is Meta.Window => w !== null && w !== undefined && w !== exclude &&
                 this.tiler.windows.includes(w) && (() => {
                     const f = w.get_frame_rect();
                     return x >= f.x && x < f.x + f.width &&
                         y >= f.y && y < f.y + f.height;
                 })());
-        if (wins.length) return wins[wins.length - 1];
+        if (wins.length) {
+            const lastWin = wins[wins.length - 1];
+            return lastWin ?? null;
+        }
 
-        let best = null, max = 0, sRect = exclude.get_frame_rect();
+        let best: Meta.Window | null = null;
+        let max = 0;
+        const sRect = exclude.get_frame_rect();
         for (const w of this.tiler.windows) {
             if (w === exclude) continue;
             const r = w.get_frame_rect();
@@ -311,6 +297,11 @@ class InteractionHandler {
 
 // ── TILING TOGGLE QUICK SETTING ───────────────────────────
 const TilingToggle = GObject.registerClass(
+    // `as any` is required: the GJS GObject subclassing idiom overrides _init
+    // with custom params and touches private GNOME internals (_settingsActions),
+    // neither of which the @girs base-class types model. Removing the cast does
+    // not typecheck. Do not "fix" this.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
         private _extensionObject!: Extension;
         private _settings!: Gio.Settings;
@@ -328,6 +319,7 @@ const TilingToggle = GObject.registerClass(
             // Bind the toggle to our tiling-enabled setting
             this._settings = extensionObject.getSettings();
             this._settings.bind('tiling-enabled',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 this as any, 'checked',
                 Gio.SettingsBindFlags.DEFAULT);
 
@@ -352,20 +344,24 @@ const TilingToggle = GObject.registerClass(
                                 return;
                             }
                             // Use async call to prevent freezing
-                            proxy.call(
-                                'ForceRetile',
-                                null,
-                                Gio.DBusCallFlags.NONE,
-                                -1,
-                                null,
-                                (proxy, result) => {
-                                    try {
-                                        proxy.call_finish(result);
-                                    } catch (e) {
-                                        console.error('Failed to call ForceRetile:', e);
+                            if (proxy) {
+                                proxy.call(
+                                    'ForceRetile',
+                                    null,
+                                    Gio.DBusCallFlags.NONE,
+                                    -1,
+                                    null,
+                                    (callProxy, result) => {
+                                        if (callProxy) {
+                                            try {
+                                                callProxy.call_finish(result);
+                                            } catch (e) {
+                                                console.error('Failed to call ForceRetile:', e);
+                                            }
+                                        }
                                     }
-                                }
-                            );
+                                );
+                            }
                         }
                     );
                 });
@@ -383,9 +379,15 @@ const TilingToggle = GObject.registerClass(
 
 // ── SYSTEM INDICATOR ────────────────────────────────────────
 const SimpleTilingIndicator = GObject.registerClass(
+    // `as any` is required for the same reason as TilingToggle above: the
+    // @girs SystemIndicator types don't model the GJS _init override idiom.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
+        // GNOME-internal members the @girs types don't model.
+        /* eslint-disable @typescript-eslint/no-explicit-any */
         private _tilingToggle?: any;
         public declare quickSettingsItems: any[];
+        /* eslint-enable @typescript-eslint/no-explicit-any */
 
         _init(extensionObject: Extension) {
             super._init();
@@ -408,12 +410,6 @@ const SimpleTilingIndicator = GObject.registerClass(
         }
     });
 
-// ── TYPE DEFINITIONS FOR WORKSPACE DATA ────────────────────
-interface WorkspaceData {
-    tiled: Meta.Window[];
-    exceptions: Meta.Window[];
-}
-
 // ── TILER ────────────────────────────────────────────────
 class Tiler {
     public grabbedWindow: Meta.Window | null;
@@ -421,7 +417,9 @@ class Tiler {
 
     private _extension: Extension;
     private _logger: Logger;
-    private _signalIds: Map<string, SignalConnection>;
+    private _timeoutRegistry: TimeoutRegistry;
+    private _workspaceTracker: WorkspaceTracker;
+    private _signals: SignalTracker;
     private _tileInProgress: boolean;
     private _innerGap: number;
     private _outerGapVertical: number;
@@ -431,22 +429,20 @@ class Tiler {
     private _exceptions: string[];
     private _interactionHandler: InteractionHandler;
     private _tileTimeoutId: number | null;
-    private _centerTimeoutIds: number[];
-    private _windowReadyTimers: Map<number, number>;
-    private _windowWorkspaceSignals: Map<number, { win: Meta.Window; signalId: number }>;
-    private _windowPrevWorkspace: WeakMap<Meta.Window, number>;
-    private _windowOperationTimestamps: Map<number, number>;
-    private _workspaceManager: Meta.WorkspaceManager;
-    private _workspaceWindows: WeakMap<Meta.Workspace, WorkspaceData>;
-    private _workspaceFingerprints: WeakMap<Meta.Workspace, string>;
+    // Pending window-ready poll per window, as TimeoutRegistry ids. Owned by
+    // this Tiler so disable() drops it together with the registry.
+    private _readyTimers: Map<Meta.Window, number>;
+    private _workspaceManager: Meta.WorkspaceManager | null;
 
     constructor(extension: Extension) {
         this._extension = extension;
         this.settings = this._extension.getSettings();
         this._logger = new Logger(this.settings);
+        this._timeoutRegistry = new TimeoutRegistry(this._logger);
+        this._workspaceTracker = new WorkspaceTracker(this._logger);
 
         this.grabbedWindow = null;
-        this._signalIds = new Map();
+        this._signals = new SignalTracker(this._logger);
         this._tileInProgress = false;
 
         this._innerGap = this.settings.get_int('inner-gap');
@@ -460,108 +456,84 @@ class Tiler {
         this._interactionHandler = new InteractionHandler(this);
 
         this._tileTimeoutId = null;
-        this._centerTimeoutIds = [];
-        this._windowReadyTimers = new Map();
-        this._windowWorkspaceSignals = new Map();
-        this._windowPrevWorkspace = new WeakMap();
-        this._windowOperationTimestamps = new Map();
-        this._workspaceWindows = new WeakMap();
-        this._workspaceFingerprints = new WeakMap();
+        this._readyTimers = new Map();
+        this._workspaceManager = null;
     }
 
     // Getter for backwards compatibility with InteractionHandler
     get windows(): Meta.Window[] {
-        const workspace = this._workspaceManager?.get_active_workspace();
-        if (!workspace) return [];
-        return this._getWorkspaceData(workspace).tiled;
-    }
-
-    private _getWorkspaceData(workspace: Meta.Workspace): WorkspaceData {
-        let data = this._workspaceWindows.get(workspace);
-        if (!data) {
-            data = { tiled: [], exceptions: [] };
-            this._workspaceWindows.set(workspace, data);
-        }
-        return data;
+        const data = this._workspaceTracker.getActiveWorkspaceData();
+        return data ? data.tiled : [];
     }
 
     enable(): void {
         this._loadExceptions();
         this._workspaceManager = global.workspace_manager;
 
-        this._signalIds.set('workspace-changed', {
-            object: this._workspaceManager,
-            id: this._workspaceManager.connect('active-workspace-changed',
-                () => this._onActiveWorkspaceChanged())
+        // Enable workspace tracker
+        this._workspaceTracker.enable(this._workspaceManager);
+
+        // Connect to workspace changed signal
+        this._signals.connect('workspace-changed', this._workspaceManager,
+            'active-workspace-changed', () => this._onActiveWorkspaceChanged());
+
+        // Connect to all existing workspaces via WorkspaceTracker
+        this._workspaceTracker.connectToAllWorkspaces({
+            onWindowAdded: (ws, win) => this._onWindowAdded(ws, win),
+            onWindowRemoved: (ws, win) => this._onWindowRemoved(ws, win)
         });
 
-        // Connect to all existing workspaces
+        // Add existing windows to tracking
         for (let i = 0; i < this._workspaceManager.get_n_workspaces(); i++) {
             const workspace = this._workspaceManager.get_workspace_by_index(i);
             if (workspace) {
-                this._connectToWorkspace(workspace);
+                workspace.list_windows().forEach((win: Meta.Window) => {
+                    this._onWindowAdded(workspace, win);
+                });
             }
         }
 
         // Listen for new workspaces being added
-        this._signalIds.set('workspace-added', {
-            object: this._workspaceManager,
-            id: this._workspaceManager.connect('workspace-added',
-                (_: any, index: number) => {
-                    const workspace = this._workspaceManager.get_workspace_by_index(index);
-                    if (workspace) {
-                        this._connectToWorkspace(workspace);
-                    }
-                })
-        });
+        this._signals.connect('workspace-added', this._workspaceManager, 'workspace-added',
+            (_: unknown, index: number) => {
+                if (!this._workspaceManager) return;
+                const workspace = this._workspaceManager.get_workspace_by_index(index);
+                if (workspace) {
+                    this._workspaceTracker.connectToWorkspace(workspace, {
+                        onWindowAdded: (ws, win) => this._onWindowAdded(ws, win),
+                        onWindowRemoved: (ws, win) => this._onWindowRemoved(ws, win)
+                    });
+                }
+            });
+
+        // Prune tracking for workspaces that get removed, so stale signal
+        // entries don't accumulate (indices are reused on removal).
+        this._signals.connect('workspace-removed', this._workspaceManager, 'workspace-removed',
+            () => this._workspaceTracker.pruneRemovedWorkspaces());
 
         this._interactionHandler.enable();
 
-        this._signalIds.set('settings-changed', {
-            object: this.settings,
-            id: this.settings.connect('changed', () => this._onSettingsChanged())
-        });
+        this._signals.connect('settings-changed', this.settings, 'changed',
+            () => this._onSettingsChanged());
     }
 
     disable(): void {
-        if (this._tileTimeoutId) {
-            GLib.source_remove(this._tileTimeoutId);
-            this._tileTimeoutId = null;
-        }
-        this._centerTimeoutIds.forEach(id => GLib.source_remove(id));
-        this._centerTimeoutIds = [];
+        // Clean up all timeouts managed by TimeoutRegistry
+        this._timeoutRegistry.clearAll();
+        this._readyTimers.clear();
 
-        // Clean up any pending window ready timers
-        for (const timerId of this._windowReadyTimers.values()) {
-            GLib.source_remove(timerId);
-        }
-        this._windowReadyTimers.clear();
-
-        // Clean up per-window workspace-changed signals
-        for (const [, data] of this._windowWorkspaceSignals.entries()) {
-            try {
-                if (data.win && data.win.get_display()) {
-                    data.win.disconnect(data.signalId);
-                }
-            } catch (e) {
-                // Window already destroyed, signal auto-disconnected
-            }
-        }
-        this._windowWorkspaceSignals.clear();
-
-        // Clear operation timestamps
-        this._windowOperationTimestamps.clear();
+        // Reset state
+        this._tileTimeoutId = null;
+        this._tileInProgress = false;
 
         this._interactionHandler.disable();
 
         // Disconnect all signals
-        for (const [, sig] of this._signalIds) {
-            try { sig.object.disconnect(sig.id); } catch { }
-        }
-        this._signalIds.clear();
+        this._signals.disconnectAll();
 
-        // Clear all workspace data (WeakMap will be garbage collected)
-        this._workspaceWindows = new WeakMap();
+        // Disable workspace tracker (cleans up workspace signals and data)
+        this._workspaceTracker.disable();
+        this._workspaceManager = null;
     }
 
     _onSettingsChanged(): void {
@@ -590,8 +562,8 @@ class Tiler {
     }
 
     _hasMaximizedWindows(): boolean {
-        const workspace = this._workspaceManager.get_active_workspace();
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getActiveWorkspaceData();
+        if (!data) return false;
         return data.tiled.some(win =>
             win && typeof win.is_maximized === 'function' &&
             win.is_maximized() && !win.minimized
@@ -621,135 +593,16 @@ class Tiler {
     }
 
     /**
-     * Check if a window operation should be skipped due to recent processing.
-     * Prevents infinite loops when windows trigger rapid successive events.
-     * @param windowId The window ID to check
-     * @param cooldownMs Cooldown period in milliseconds (default 1000ms)
-     * @returns true if operation should be skipped
+     * Check if a window is still valid (not destroyed).
+     * Use this before any window operations to prevent crashes from stale references.
      */
-    _shouldSkipOperation(windowId: number, cooldownMs = 1000): boolean {
-        const lastTimestamp = this._windowOperationTimestamps.get(windowId);
-        if (lastTimestamp && (Date.now() - lastTimestamp) < cooldownMs) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Record that an operation was performed on a window.
-     * @param windowId The window ID that was processed
-     */
-    _recordOperation(windowId: number): void {
-        this._windowOperationTimestamps.set(windowId, Date.now());
-    }
-
-    /**
-     * Clear operation timestamp for a window (e.g., when window is removed).
-     * @param windowId The window ID to clear
-     */
-    _clearOperationTimestamp(windowId: number): void {
-        this._windowOperationTimestamps.delete(windowId);
-    }
-
-    _connectWindowWorkspaceSignal(win: Meta.Window, initialWorkspace: Meta.Workspace): void {
-        const windowId = win.get_id();
-
-        // Don't connect if already connected
-        if (this._windowWorkspaceSignals.has(windowId)) return;
-
-        // Store initial workspace index in WeakMap for change detection
-        this._windowPrevWorkspace.set(win, initialWorkspace.index());
-
-        const signalId = win.connect('workspace-changed', () => {
-            this._onWindowWorkspaceChanged(win);
-        });
-
-        this._windowWorkspaceSignals.set(windowId, { win, signalId });
-        this._logger.debug(`Connected workspace-changed signal for window ${windowId}`);
-    }
-
-    _disconnectWindowWorkspaceSignal(win: Meta.Window): void {
-        const windowId = win.get_id();
-        const data = this._windowWorkspaceSignals.get(windowId);
-
-        if (data) {
-            try {
-                if (data.win && data.win.get_display()) {
-                    data.win.disconnect(data.signalId);
-                }
-            } catch (e) {
-                // Window already destroyed, signal auto-disconnected
-            }
-            this._windowWorkspaceSignals.delete(windowId);
-            this._logger.debug(`Disconnected workspace-changed signal for window ${windowId}`);
-        }
-
-        // WeakMap auto-cleans when window is garbage collected
-    }
-
-    _onWindowWorkspaceChanged(win: Meta.Window): void {
-        if (!win || !win.get_display()) return;
-
-        const windowId = win.get_id();
-        const newWorkspace = win.get_workspace();
-        if (!newWorkspace) return;  // Window being destroyed
-
-        const prevWorkspaceIndex = this._windowPrevWorkspace.get(win);
-        const newWorkspaceIndex = newWorkspace.index();
-
-        // Skip if workspace hasn't actually changed
-        if (prevWorkspaceIndex === newWorkspaceIndex) return;
-
-        // Skip if this window was recently processed (prevents rapid event loops)
-        if (this._shouldSkipOperation(windowId, 500)) {
-            this._logger.debug(`Skipping workspace change for window ${windowId} - recently processed`);
-            return;
-        }
-
-        const winTitle = win.get_title() || '(untitled)';
-        this._logger.debug(`Window "${winTitle}" moved from workspace ${prevWorkspaceIndex} to ${newWorkspaceIndex}`);
-
-        // Remove from previous workspace tracking
-        if (prevWorkspaceIndex !== undefined && prevWorkspaceIndex >= 0) {
-            const prevWorkspace = this._workspaceManager.get_workspace_by_index(prevWorkspaceIndex);
-            if (prevWorkspace) {
-                const prevData = this._getWorkspaceData(prevWorkspace);
-                const tiledIndex = prevData.tiled.indexOf(win);
-                if (tiledIndex > -1) {
-                    prevData.tiled.splice(tiledIndex, 1);
-                    this._logger.debug(`Removed from workspace ${prevWorkspaceIndex} tiled list`);
-                }
-                const exceptionsIndex = prevData.exceptions.indexOf(win);
-                if (exceptionsIndex > -1) {
-                    prevData.exceptions.splice(exceptionsIndex, 1);
-                }
-            }
-        }
-
-        // Add to new workspace tracking (if not already tracked)
-        const newData = this._getWorkspaceData(newWorkspace);
-        if (!newData.tiled.includes(win) && !newData.exceptions.includes(win)) {
-            if (this._isException(win)) {
-                newData.exceptions.push(win);
-            } else if (this._isTileable(win)) {
-                newData.tiled.push(win);
-                this._logger.debug(`Added to workspace ${newWorkspaceIndex} tiled list`);
-            }
-        }
-
-        // Update stored workspace index
-        this._windowPrevWorkspace.set(win, newWorkspaceIndex);
-
-        // Record this operation to prevent rapid re-processing
-        this._recordOperation(windowId);
-
-        // Queue retiling for the active workspace
-        this.queueTile();
+    _isWindowValid(win: Meta.Window | null | undefined): win is Meta.Window {
+        return win !== null && win !== undefined && win.get_display() !== null;
     }
 
     _waitForWindowReady(
         win: Meta.Window,
-        workspace: Meta.Workspace,
+        _workspace: Meta.Workspace,
         callback: () => void,
         maxAttempts = 20
     ): void {
@@ -757,12 +610,10 @@ class Tiler {
         const pollInterval = 50; // ms
 
         // Cancel any existing timer for this window
-        if (this._windowReadyTimers.has(windowId)) {
-            const existingTimerId = this._windowReadyTimers.get(windowId);
-            if (existingTimerId) {
-                GLib.source_remove(existingTimerId);
-            }
-            this._windowReadyTimers.delete(windowId);
+        const existingRegistryId = this._readyTimers.get(win);
+        if (existingRegistryId !== undefined) {
+            this._timeoutRegistry.remove(existingRegistryId);
+            this._readyTimers.delete(win);
         }
 
         // If already ready, call immediately
@@ -779,40 +630,40 @@ class Tiler {
             // Window was destroyed while waiting - clean up and exit
             if (!win || !win.get_display()) {
                 this._logger.debug(`Window ${windowId} destroyed while waiting for geometry`);
-                this._windowReadyTimers.delete(windowId);
+                this._readyTimers.delete(win);
                 return GLib.SOURCE_REMOVE;
             }
 
             if (this._isWindowReady(win)) {
                 this._logger.debug(`Window ready after ${attempts} attempts: "${win.get_title()}"`);
-                this._windowReadyTimers.delete(windowId);
+                this._readyTimers.delete(win);
                 callback();
                 return GLib.SOURCE_REMOVE;
             }
 
             if (attempts >= maxAttempts) {
                 this._logger.debug(`Window geometry timeout after ${attempts} attempts: "${win.get_title()}" - skipping`);
-                this._windowReadyTimers.delete(windowId);
+                this._readyTimers.delete(win);
                 // Don't proceed on timeout - window may not be ready for tiling
                 return GLib.SOURCE_REMOVE;
             }
 
-            return GLib.SOURCE_CONTINUE;
+            // Need to reschedule for next check
+            const newRegistryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
+            this._readyTimers.set(win, newRegistryId);
+            return GLib.SOURCE_REMOVE;
         };
 
-        const timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, pollInterval, check);
-        this._windowReadyTimers.set(windowId, timerId);
+        const registryId = this._timeoutRegistry.add(pollInterval, check, `window-ready-${windowId}`);
+        this._readyTimers.set(win, registryId);
     }
 
     _centerWindow(win: Meta.Window): void {
-        const timeoutId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT,
+        this._timeoutRegistry.add(
             this._centeringDelay,
             () => {
-                const index = this._centerTimeoutIds.indexOf(timeoutId);
-                if (index > -1) this._centerTimeoutIds.splice(index, 1);
-
                 if (!win || !win.get_display()) return GLib.SOURCE_REMOVE;
+                if (!this._workspaceManager) return GLib.SOURCE_REMOVE; // Extension disabled
 
                 // Conditional unmaximize for exception windows based on setting
                 if (!this.settings.get_boolean('respect-maximized-windows') &&
@@ -842,20 +693,25 @@ class Tiler {
 
                 // Only make window on top if the setting is enabled
                 if (this.settings.get_boolean('exceptions-always-on-top')) {
-                    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    this._timeoutRegistry.addIdle(() => {
                         if (win.get_display()) {
-                            if (typeof (win as any).set_keep_above === "function")
-                                (win as any).set_keep_above(true);
-                            else if (typeof (win as any).make_above === "function")
-                                (win as any).make_above();
+                            // set_keep_above/make_above availability varies across
+                            // Meta versions; feature-detect at runtime.
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const w = win as any;
+                            if (typeof w.set_keep_above === "function") {
+                                w.set_keep_above(true);
+                            } else if (typeof w.make_above === "function") {
+                                w.make_above();
+                            }
                         }
                         return GLib.SOURCE_REMOVE;
-                    });
+                    }, 'center-window-above');
                 }
                 return GLib.SOURCE_REMOVE;
-            }
+            },
+            'center-window'
         );
-        this._centerTimeoutIds.push(timeoutId);
     }
 
     _onWindowMinimizedStateChanged(): void {
@@ -865,7 +721,7 @@ class Tiler {
     _onWindowAdded(workspace: Meta.Workspace, win: Meta.Window): void {
         if (!workspace) return;
 
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getWorkspaceData(workspace);
 
         // Check if already tracked in this workspace
         if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
@@ -880,7 +736,7 @@ class Tiler {
         // Window may have been destroyed while waiting
         if (!win || !win.get_display()) return;
 
-        const data = this._getWorkspaceData(workspace);
+        const data = this._workspaceTracker.getWorkspaceData(workspace);
 
         // Re-check if already tracked (might have been added while waiting)
         if (data.tiled.includes(win) || data.exceptions.includes(win)) return;
@@ -892,7 +748,7 @@ class Tiler {
 
         if (this._isException(win)) {
             // Add to exceptions list for this workspace
-            data.exceptions.push(win);
+            this._workspaceTracker.addWindow(workspace, win, true);
             this._logger.debug(`Window added (exception): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}`);
 
             // Only apply exception window settings when tiling is enabled and at least one setting is on
@@ -904,173 +760,121 @@ class Tiler {
             return;
         }
 
-        if (this._isTileable(win)) {
-            // Add to tiled list for this workspace
-            if (this.settings.get_string("new-window-behavior") === "primary") {
+        if (!this._isTileable(win)) {
+            // Log why the window was skipped
+            const type = win.get_window_type();
+            this._logger.debug(
+                `Window skipped (not tileable): "${winTitle}" [${wmClass}] ws=${wsIndex}` +
+                ` type=${type} minimized=${win.minimized}` +
+                ` allWorkspaces=${win.is_on_all_workspaces()}` +
+                ` attachedDialog=${win.is_attached_dialog()}` +
+                ` transient=${win.get_transient_for() !== null}` +
+                ` skipTaskbar=${win.skip_taskbar}`
+            );
+            if (win.minimized) {
+                this._watchForUnminimize(win);
+            }
+            return;
+        }
+
+        // Add to tiled list for this workspace
+        this._workspaceTracker.addWindow(workspace, win, false);
+
+        // Reorder if needed based on new-window-behavior setting
+        if (this.settings.get_string("new-window-behavior") === "primary") {
+            // Move newly added window to front
+            const index = data.tiled.indexOf(win);
+            if (index > 0) {
+                data.tiled.splice(index, 1);
                 data.tiled.unshift(win);
-            } else {
-                data.tiled.push(win);
             }
-            this._logger.debug(`Window added (tiled): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}, total tiled=${data.tiled.length}`);
+        }
 
-            const id = win.get_id();
-            // Only connect signals if not already connected
-            if (!this._signalIds.has(`unmanaged-${id}`)) {
-                this._signalIds.set(`unmanaged-${id}`, {
-                    object: win,
-                    id: win.connect("unmanaged", () =>
-                        this._onWindowRemoved(null, win)  // Pass null to indicate destruction
-                    ),
-                });
-                this._signalIds.set(`size-changed-${id}`, {
-                    object: win,
-                    id: win.connect("size-changed", () => {
-                        if (!this.grabbedWindow) this.queueTile();
-                    }),
-                });
-                this._signalIds.set(`minimized-${id}`, {
-                    object: win,
-                    id: win.connect("notify::minimized", () =>
-                        this._onWindowMinimizedStateChanged()
-                    ),
-                });
+        this._logger.debug(`Window added (tiled): "${winTitle}" [${wmClass}] ws=${wsIndex} monitor=${monitorIndex}, total tiled=${data.tiled.length}`);
 
-                // Connect per-window workspace-changed signal
-                this._connectWindowWorkspaceSignal(win, workspace);
-            }
+        const id = win.get_id();
+        // Only connect signals if not already connected
+        if (!this._signals.has(`unmanaged-${id}`)) {
+            this._signals.connect(`unmanaged-${id}`, win, "unmanaged",
+                () => this._onWindowRemoved(null, win)); // Pass null to indicate destruction
+            this._signals.connect(`size-changed-${id}`, win, "size-changed",
+                () => { if (!this.grabbedWindow) this.queueTile(); });
+            this._signals.connect(`minimized-${id}`, win, "notify::minimized",
+                () => this._onWindowMinimizedStateChanged());
+        }
 
-            // Only queue tiling if tiling is enabled
-            if (this.settings.get_boolean('tiling-enabled')) {
-                this.queueTile();
-            }
-            // Update workspace fingerprint after adding window
-            this._updateCurrentWorkspaceFingerprint();
+        // Only queue tiling if tiling is enabled
+        if (this.settings.get_boolean('tiling-enabled')) {
+            this.queueTile();
         }
     }
 
+    // A window that is minimized when added gets no per-window signals, so
+    // nothing would re-check it once restored. Re-run the add on unminimize.
+    _watchForUnminimize(win: Meta.Window): void {
+        const key = `unminimize-${win.get_id()}`;
+        this._signals.connect(key, win, 'notify::minimized', () => {
+            if (win.minimized) return;
+            this._signals.disconnect(key);
+            const workspace = win.get_workspace();
+            if (workspace) {
+                this._onWindowAdded(workspace, win);
+            }
+        });
+    }
+
     _onWindowRemoved(workspace: Meta.Workspace | null, win: Meta.Window): void {
-        const windowId = win.get_id();
         const winTitle = win.get_title() || '(untitled)';
         const wmClass = win.get_wm_class() || '(unknown)';
         const wsIndex = workspace?.index() ?? -1;
 
+        // The destination workspace's window-added sets up a new watch if needed.
+        this._signals.disconnect(`unminimize-${win.get_id()}`);
+
         // Cancel any pending geometry wait timer for this window
-        if (this._windowReadyTimers.has(windowId)) {
-            const timerId = this._windowReadyTimers.get(windowId);
-            if (timerId) {
-                GLib.source_remove(timerId);
-            }
-            this._windowReadyTimers.delete(windowId);
+        const readyTimerId = this._readyTimers.get(win);
+        if (readyTimerId !== undefined) {
+            this._timeoutRegistry.remove(readyTimerId);
+            this._readyTimers.delete(win);
         }
 
-        // Remove from the specific workspace if provided, otherwise from all workspaces
+        // Remove from the specific workspace if provided
         if (workspace) {
-            const data = this._getWorkspaceData(workspace);
-            const tiledIndex = data.tiled.indexOf(win);
-            const wasInTiled = tiledIndex > -1;
-            if (wasInTiled) data.tiled.splice(tiledIndex, 1);
+            const data = this._workspaceTracker.getWorkspaceData(workspace);
+            const wasInTiled = data.tiled.includes(win);
+            const wasInExceptions = data.exceptions.includes(win);
 
-            const exceptionsIndex = data.exceptions.indexOf(win);
-            const wasInExceptions = exceptionsIndex > -1;
-            if (wasInExceptions) data.exceptions.splice(exceptionsIndex, 1);
+            this._workspaceTracker.removeWindow(workspace, win);
 
             const windowType = wasInTiled ? 'tiled' : (wasInExceptions ? 'exception' : 'unknown');
             this._logger.debug(`Window removed (${windowType}): "${winTitle}" [${wmClass}] ws=${wsIndex}, remaining tiled=${data.tiled.length}`);
         } else {
-            // Window is being destroyed, remove from all workspaces
-            // Since we're using WeakMap, we can't iterate over all workspaces
-            // But the window signals will be disconnected below
+            // Mutter also emits window-removed on the window's workspace during
+            // unmanage, which removes it from tracker data.
             this._logger.debug(`Window destroyed: "${winTitle}" [${wmClass}]`);
         }
 
         // Clean up signals only if window is being destroyed (workspace is null)
         if (!workspace) {
             ["unmanaged", "size-changed", "minimized"].forEach((prefix) => {
-                const key = `${prefix}-${win.get_id()}`;
-                if (this._signalIds.has(key)) {
-                    const sig = this._signalIds.get(key);
-                    if (sig) {
-                        try {
-                            sig.object.disconnect(sig.id);
-                        } catch (e) { }
-                        this._signalIds.delete(key);
-                    }
-                }
+                this._signals.disconnect(`${prefix}-${win.get_id()}`);
             });
-
-            // Disconnect per-window workspace-changed signal
-            this._disconnectWindowWorkspaceSignal(win);
-
-            // Clear operation timestamp
-            this._clearOperationTimestamp(windowId);
         }
 
         this.queueTile();
-        // Update workspace fingerprint after removing window
-        this._updateCurrentWorkspaceFingerprint();
-    }
-
-    _createWorkspaceFingerprint(windows: Meta.Window[]): string {
-        return windows
-            .map(win => win.get_id())
-            .sort((a, b) => a - b)
-            .join(',');
-    }
-
-    _updateCurrentWorkspaceFingerprint(): void {
-        const workspace = this._workspaceManager.get_active_workspace();
-        const data = this._getWorkspaceData(workspace);
-        const currentFingerprint = this._createWorkspaceFingerprint(data.tiled);
-        this._workspaceFingerprints.set(workspace, currentFingerprint);
     }
 
     _onActiveWorkspaceChanged(): void {
+        if (!this._workspaceManager) return; // Extension disabled
+
         // Just queue a retile for the new workspace, no disconnection needed
         const workspace = this._workspaceManager.get_active_workspace();
         const wsIndex = workspace?.index() ?? -1;
-        const data = workspace ? this._getWorkspaceData(workspace) : null;
+        const data = workspace ? this._workspaceTracker.getWorkspaceData(workspace) : null;
         this._logger.debug(`Active workspace changed to workspace ${wsIndex} with ${data?.tiled.length ?? 0} tiled windows`);
         this.queueTile();
     }
 
-    _connectToWorkspace(workspace: Meta.Workspace): void {
-        // Skip if already connected to this workspace
-        const key = `window-added-${workspace.index()}`;
-        if (this._signalIds.has(key)) return;
-
-        // Get workspace data
-        const data = this._getWorkspaceData(workspace);
-        const wsIndex = workspace.index();
-        const windowCount = workspace.list_windows().length;
-        this._logger.debug(`Connecting to workspace ${wsIndex} with ${windowCount} existing windows`);
-
-        // Add existing windows to tracking if not already tracked
-        workspace.list_windows().forEach((win: Meta.Window) => {
-            // Check if window is already tracked
-            if (!data.tiled.includes(win) && !data.exceptions.includes(win)) {
-                this._onWindowAdded(workspace, win);
-            }
-        });
-
-        // Connect workspace event handlers
-        this._signalIds.set(`window-added-${workspace.index()}`, {
-            object: workspace,
-            id: workspace.connect("window-added", (ws: any, win: Meta.Window) =>
-                this._onWindowAdded(ws, win)
-            ),
-        });
-        this._signalIds.set(`window-removed-${workspace.index()}`, {
-            object: workspace,
-            id: workspace.connect("window-removed", (ws: any, win: Meta.Window) =>
-                this._onWindowRemoved(ws, win)
-            ),
-        });
-    }
-
-    _disconnectFromWorkspace(): void {
-        // This method is no longer needed but kept for compatibility
-        // Actual cleanup happens in disable()
-    }
 
     queueTile(): void {
         if (this._tileInProgress || this._tileTimeoutId) {
@@ -1091,18 +895,28 @@ class Tiler {
 
         this._logger.debug(`Tiling queued, will execute in ${this._tilingDelay}ms`);
         this._tileInProgress = true;
-        this._tileTimeoutId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT,
+        this._tileTimeoutId = this._timeoutRegistry.add(
             this._tilingDelay,
             () => {
-                this._tileWindows();
-                this._tileInProgress = false;
-                this._tileTimeoutId = null;
+                // Reset the flags even if tiling throws, or every later
+                // queueTile() call returns at the in-progress guard.
+                try {
+                    this._tileWindows();
+                } catch (e) {
+                    this._logger.error(`Tiling failed: ${e}\n${e instanceof Error ? e.stack : ''}`);
+                } finally {
+                    this._tileInProgress = false;
+                    this._tileTimeoutId = null;
+                }
                 return GLib.SOURCE_REMOVE;
-            }
+            },
+            'tiling-queue'
         );
     }
 
+    // Runs for explicit user actions (swap keybindings, Force Retile), so it
+    // tiles even when respect-maximized-windows would hold back queueTile():
+    // the swaps have already reordered the list and must be applied.
     tileNow(): void {
         if (!this.settings.get_boolean('tiling-enabled')) return;
         if (!this._tileInProgress) {
@@ -1110,58 +924,13 @@ class Tiler {
         }
     }
 
-    _splitLayout(windows: Meta.Window[], area: { x: number; y: number; width: number; height: number }): void {
-        if (windows.length === 0) return;
-        if (windows.length === 1) {
-            windows[0].move_resize_frame(
-                true,
-                area.x,
-                area.y,
-                area.width,
-                area.height
-            );
-            return;
-        }
-        const gap = Math.floor(this._innerGap / 2);
-        const primaryWindows = [windows[0]];
-        const secondaryWindows = windows.slice(1);
-        let primaryArea, secondaryArea;
-        if (area.width > area.height) {
-            const primaryWidth = Math.floor(area.width / 2) - gap;
-            primaryArea = {
-                x: area.x,
-                y: area.y,
-                width: primaryWidth,
-                height: area.height,
-            };
-            secondaryArea = {
-                x: area.x + primaryWidth + this._innerGap,
-                y: area.y,
-                width: area.width - primaryWidth - this._innerGap,
-                height: area.height,
-            };
-        } else {
-            const primaryHeight = Math.floor(area.height / 2) - gap;
-            primaryArea = {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: primaryHeight,
-            };
-            secondaryArea = {
-                x: area.x,
-                y: area.y + primaryHeight + this._innerGap,
-                width: area.width,
-                height: area.height - primaryHeight - this._innerGap,
-            };
-        }
-        this._splitLayout(primaryWindows, primaryArea);
-        this._splitLayout(secondaryWindows, secondaryArea);
-    }
-
     _tileWindows(): void {
+        if (!this._workspaceManager) return; // Extension disabled
+
         const workspace = this._workspaceManager.get_active_workspace();
-        const data = this._getWorkspaceData(workspace);
+        if (!workspace) return; // No active workspace
+
+        const data = this._workspaceTracker.getWorkspaceData(workspace);
         const wsIndex = workspace.index();
 
         this._logger.debug(`_tileWindows() executing for workspace ${wsIndex}`);
@@ -1169,55 +938,73 @@ class Tiler {
         // Recheck for exceptions after delay - window properties may now be set
         const windowsToRecheck = [...data.tiled];
         for (const win of windowsToRecheck) {
-            // Skip destroyed windows
-            if (!win || !win.get_display() || win.get_monitor() < 0) continue;
+            // Skip if window was destroyed while we were processing
+            if (!this._isWindowValid(win)) {
+                this._logger.debug(`Skipping stale window reference during exception recheck`);
+                this._workspaceTracker.removeWindow(workspace, win);
+                continue;
+            }
+
             if (this._isException(win)) {
                 // Move from tiled to exceptions
-                const index = data.tiled.indexOf(win);
-                if (index > -1) {
-                    data.tiled.splice(index, 1);
-                    data.exceptions.push(win);
-                    this._logger.debug(`Rechecked window "${win.get_title()}" is now an exception, moved to exceptions list`);
+                this._workspaceTracker.removeWindow(workspace, win);
+                this._workspaceTracker.addWindow(workspace, win, true);
+                this._logger.debug(`Rechecked window "${win.get_title()}" is now an exception, moved to exceptions list`);
 
-                    // Apply exception window settings if enabled
-                    if (this.settings.get_boolean('tiling-enabled') &&
-                        (this.settings.get_boolean('exceptions-always-center') ||
-                         this.settings.get_boolean('exceptions-always-on-top'))) {
-                        this._centerWindow(win);
-                    }
+                // Apply exception window settings if enabled
+                if (this.settings.get_boolean('tiling-enabled') &&
+                    (this.settings.get_boolean('exceptions-always-center') ||
+                     this.settings.get_boolean('exceptions-always-on-top'))) {
+                    this._centerWindow(win);
                 }
             }
         }
 
+        const primaryMonitor = Main.layoutManager.primaryMonitor;
         const windowsToTile = data.tiled.filter((win) => {
             // Skip destroyed windows (can happen due to race between destroy event and tiling)
             if (!win || !win.get_display()) {
                 this._logger.debug(`  Skipping window (no display): id=${win?.get_id()}`);
                 return false;
             }
-            // Skip windows with invalid monitor (indicates window is being destroyed)
-            if (win.get_monitor() < 0) {
-                this._logger.debug(`  Skipping window (invalid monitor): "${win.get_title()}"`);
-                return false;
-            }
             if (win.minimized) {
                 this._logger.debug(`  Skipping window (minimized): "${win.get_title()}"`);
                 return false;
             }
+            // Handle windows with invalid monitor assignment (monitor == -1).
+            // This can happen when Mutter clears the monitor ref during destruction,
+            // or when a window gets stuck without a monitor after monitor hotplug
+            // (known issue with Electron/Wayland apps, see GNOME Shell #4713).
+            // If the window is otherwise healthy, recover by moving it to the primary monitor.
+            if (win.get_monitor() < 0 && !(primaryMonitor && this._isWindowReady(win))) {
+                this._logger.debug(`  Skipping window (invalid monitor, not recoverable): "${win.get_title()}"`);
+                return false;
+            }
             return true;
         });
+        for (const win of windowsToTile) {
+            if (primaryMonitor && win.get_monitor() < 0) {
+                this._logger.debug(`  Recovering window with invalid monitor: "${win.get_title()}" -> monitor ${primaryMonitor.index}`);
+                win.move_to_monitor(primaryMonitor.index);
+            }
+        }
         if (windowsToTile.length === 0) {
             this._logger.debug(`No windows to tile on workspace ${wsIndex}`);
             return;
         }
 
         const monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor) {
+            this._logger.error('No primary monitor found');
+            return;
+        }
         const workArea = workspace.get_work_area_for_monitor(monitor.index);
 
         // Log monitor and window details for multi-monitor diagnostics
         this._logger.debug(`Tiling ${windowsToTile.length} windows on workspace ${wsIndex}`);
         this._logger.debug(`  Using primary monitor index ${monitor.index}, work area: x=${workArea.x} y=${workArea.y} w=${workArea.width} h=${workArea.height}`);
         windowsToTile.forEach((win, idx) => {
+            if (!this._isWindowValid(win)) return;
             const winMonitor = win.get_monitor();
             this._logger.debug(`    [${idx}] "${win.get_title()}" is on monitor ${winMonitor}`);
         });
@@ -1233,52 +1020,43 @@ class Tiler {
         if (!this.settings.get_boolean('respect-maximized-windows')) {
             // Current behavior: force unmaximize all windows
             windowsToTile.forEach((win) => {
-                if (win.is_maximized()) win.unmaximize();
+                if (!this._isWindowValid(win)) return;
+                if (win.is_maximized()) {
+                    win.unmaximize();
+                }
             });
         }
         // If respecting maximized windows, don't force unmaximize
-        if (windowsToTile.length === 1) {
-            windowsToTile[0].move_resize_frame(
-                true,
-                innerArea.x,
-                innerArea.y,
-                innerArea.width,
-                innerArea.height
-            );
-            return;
-        }
-        const gap = Math.floor(this._innerGap / 2);
-        const primaryWidth = Math.floor(innerArea.width / 2) - gap;
-        const primary = windowsToTile[0];
-        primary.move_resize_frame(
-            true,
-            innerArea.x,
-            innerArea.y,
-            primaryWidth,
-            innerArea.height
-        );
-        const stackArea = {
-            x: innerArea.x + primaryWidth + this._innerGap,
-            y: innerArea.y,
-            width: innerArea.width - primaryWidth - this._innerGap,
-            height: innerArea.height,
-        };
-        this._splitLayout(windowsToTile.slice(1), stackArea);
+
+        // Compute the target rectangle for each window, then apply.
+        const rects = computeLayout(windowsToTile.length, innerArea, this._innerGap);
+        windowsToTile.forEach((win, i) => {
+            // Re-check validity: a window may have been destroyed between the
+            // filter above and here.
+            if (!this._isWindowValid(win)) return;
+            const rect = rects[i];
+            if (!rect) return;
+            win.move_resize_frame(true, rect.x, rect.y, rect.width, rect.height);
+        });
     }
 }
 
 // ── EXTENSION‑WRAPPER ───────────────────────────────────
 export default class SimpleTilingExtension extends Extension {
     public tiler?: Tiler;
+    // Instance of the registerClass'd SimpleTilingIndicator, whose constructed
+    // type the @girs types don't expose.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private _indicator?: any;
-    private _dbus?: any;
+    private _dbus?: Gio.DBusExportedObject;
 
-    enable(): void {
+    override enable(): void {
         this.tiler = new Tiler(this);
         this.tiler.enable();
 
         // Create and add Quick Settings indicator
         this._indicator = new SimpleTilingIndicator(this);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (Main.panel.statusArea as any).quickSettings.addExternalIndicator(this._indicator);
 
         // Export D-Bus interface exactly like focused-window-dbus
@@ -1289,7 +1067,7 @@ export default class SimpleTilingExtension extends Extension {
         );
     }
 
-    disable(): void {
+    override disable(): void {
         // Unexport D-Bus interface
         if (this._dbus) {
             this._dbus.flush();
