@@ -323,10 +323,10 @@ const TilingToggle = GObject.registerClass(
     // not typecheck. Do not "fix" this.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
-        private _extensionObject!: Extension;
+        private _extensionObject!: SimpleTilingExtension;
         private _settings!: Gio.Settings;
 
-        _init(extensionObject: Extension) {
+        _init(extensionObject: SimpleTilingExtension) {
             super._init({
                 title: _('Tiling'),
                 subtitle: _('Automatic window tiling'),
@@ -348,43 +348,7 @@ const TilingToggle = GObject.registerClass(
 
             // Add force retiling action
             this.menu.addAction(_('Force Retiling'),
-                () => {
-                    // Use async D-Bus call to prevent blocking the main thread
-                    Gio.DBusProxy.new_for_bus(
-                        Gio.BusType.SESSION,
-                        Gio.DBusProxyFlags.NONE,
-                        null,
-                        'org.gnome.Shell',
-                        '/org/gnome/Shell/Extensions/SimpleTiling',
-                        'org.gnome.Shell.Extensions.SimpleTiling',
-                        null,
-                        (proxy, error) => {
-                            if (error) {
-                                console.error('Failed to create D-Bus proxy:', error);
-                                return;
-                            }
-                            // Use async call to prevent freezing
-                            if (proxy) {
-                                proxy.call(
-                                    'ForceRetile',
-                                    null,
-                                    Gio.DBusCallFlags.NONE,
-                                    -1,
-                                    null,
-                                    (callProxy, result) => {
-                                        if (callProxy) {
-                                            try {
-                                                callProxy.call_finish(result);
-                                            } catch (e) {
-                                                console.error('Failed to call ForceRetile:', e);
-                                            }
-                                        }
-                                    }
-                                );
-                            }
-                        }
-                    );
-                });
+                () => this._extensionObject.tiler?.tileNow());
 
             // Add settings menu item
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -409,7 +373,7 @@ const SimpleTilingIndicator = GObject.registerClass(
         public declare quickSettingsItems: any[];
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
-        _init(extensionObject: Extension) {
+        _init(extensionObject: SimpleTilingExtension) {
             super._init();
 
             // Optional: Create an indicator icon (uncomment if desired)
