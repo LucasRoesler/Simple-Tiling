@@ -23,6 +23,7 @@ import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import { WorkspaceTracker } from './managers/workspaceTracker.js';
 import { SignalTracker } from './managers/signalTracker.js';
 import { computeLayout } from './layout/tilingLayout.js';
+import { parseDBusAccess, whenCallerAllowed } from './dbus/callerPolicy.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
@@ -1133,8 +1134,39 @@ export default class SimpleTilingExtension extends Extension {
         }
     }
 
-    // D-Bus method implementations
-    GetWindowList(): string {
+    // D-Bus method implementations. GJS dispatches to these Async forms, which
+    // receive the invocation and with it the caller's bus name.
+    GetWindowListAsync(_params: [], invocation: Gio.DBusMethodInvocation): void {
+        this._serveDBusCall(invocation, () =>
+            invocation.return_value(new GLib.Variant('(s)', [this._windowListJson()])));
+    }
+
+    ForceRetileAsync(_params: [], invocation: Gio.DBusMethodInvocation): void {
+        this._serveDBusCall(invocation, () => {
+            this.tiler?.tileNow();
+            invocation.return_value(null);
+        });
+    }
+
+    _serveDBusCall(invocation: Gio.DBusMethodInvocation, reply: () => void): void {
+        const settings = this.tiler?.settings;
+        if (!settings) {
+            invocation.return_dbus_error('org.freedesktop.DBus.Error.Failed',
+                'Simple Tiling is disabled');
+            return;
+        }
+        const access = parseDBusAccess(settings.get_string('dbus-access'));
+        whenCallerAllowed(invocation, access, () => {
+            // The caller check is asynchronous; the screen may have locked,
+            // and the API been unexported, since the call arrived.
+            if (!this._dbus) {
+                throw new Error('Simple Tiling D-Bus API is unavailable while the screen is locked');
+            }
+            reply();
+        });
+    }
+
+    _windowListJson(): string {
         try {
             const workspace = global.workspace_manager.get_active_workspace();
             const windows = workspace.list_windows()
@@ -1148,12 +1180,6 @@ export default class SimpleTilingExtension extends Extension {
         } catch (e) {
             console.error('SimpleTiling: Error getting window list:', e);
             return '[]';
-        }
-    }
-
-    ForceRetile(): void {
-        if (this.tiler) {
-            this.tiler.tileNow();
         }
     }
 }

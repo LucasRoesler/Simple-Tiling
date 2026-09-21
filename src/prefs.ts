@@ -140,6 +140,27 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             settings.set_string('new-window-behavior', newVal);
         });
 
+        const rowDBusAccess = new Adw.ComboRow({
+            title: 'D-Bus Access',
+            model: new Gtk.StringList({
+                strings: ['Extension Preferences Only (Default)', 'Any Application'],
+            }),
+        });
+        groupBehavior.add(rowDBusAccess);
+
+        rowDBusAccess.selected = settings.get_string('dbus-access') === 'any' ? 1 : 0;
+        const updateDBusAccessSubtitle = (): void => {
+            rowDBusAccess.subtitle = rowDBusAccess.selected === 1
+                ? 'Any application can list the windows on the active workspace, with titles, and trigger a retile'
+                : 'Only extension preferences can list windows or trigger a retile';
+        };
+        updateDBusAccessSubtitle();
+
+        rowDBusAccess.connect('notify::selected', () => {
+            settings.set_string('dbus-access', rowDBusAccess.selected === 1 ? 'any' : 'prefs-only');
+            updateDBusAccessSubtitle();
+        });
+
         // ── WINDOW EXCEPTIONS ──────────────────────────────────────────
         const groupExceptions = new Adw.PreferencesGroup({
             title: 'Window Exceptions',

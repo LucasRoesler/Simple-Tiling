@@ -89,6 +89,16 @@
       <description>When enabled, extension logs detailed information to GNOME Shell journal for troubleshooting. View logs with: journalctl -f -o cat /usr/bin/gnome-shell</description>
     </key>
 
+    <key name="dbus-access" type="s">
+      <choices>
+        <choice value="prefs-only"/>
+        <choice value="any"/>
+      </choices>
+      <default>'prefs-only'</default>
+      <summary>Which processes may use the D-Bus API</summary>
+      <description>'prefs-only' admits only the owner of org.gnome.Shell.Extensions, the service that runs extension preferences; sandboxed apps cannot own that name, unsandboxed processes can. 'any' lets every process in the session list the windows of the active workspace (title, WM class, app ID) and trigger a retile.</description>
+    </key>
+
     <key name="default-exceptions" type="as">
       <default>['ulauncher', 'gnome-screenshot', 'org.gnome.NautilusPreviewer', 'org.gnome.Shell.Extensions', 'evolution-alarm-notify']</default>
       <summary>Default exception applications</summary>
