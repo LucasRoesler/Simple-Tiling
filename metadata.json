@@ -9,6 +9,7 @@
     "49",
     "50"
   ],
+  "session-modes": ["user", "unlock-dialog"],
   "settings-schema": "org.gnome.shell.extensions.simple-tiling.lucasroesler",
   "preferences_ui": "prefs.js",
   "url": "https://github.com/LucasRoesler/Simple-Tiling",
