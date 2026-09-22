@@ -35,7 +35,8 @@
     "// Convenience shortcuts - Use quick for rapid testing during development": "",
     "quick": "npm run build && npm run install:ext",
     "all": "npm run build",
-    "help": "echo 'Run npm run to see all available commands' && npm run"
+    "help": "echo 'Run npm run to see all available commands' && npm run",
+    "test": "node --test 'tests/**/*.test.ts'"
   },
   "devDependencies": {
     "@girs/adw-1": "latest",
@@ -53,5 +54,8 @@
     "@typescript-eslint/parser": "^8.55.0",
     "eslint": "^9.39.2",
     "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

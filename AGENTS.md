@@ -22,6 +22,7 @@ Note: Do not run `bd sync` - beads is configured for local-only tracking.
 ```bash
 npm run build                    # Compile TypeScript
 npm run lint                     # Run ESLint
+npm test                         # Unit tests for pure modules (Node 24+)
 ```
 
 ## GNOME Shell Extension
