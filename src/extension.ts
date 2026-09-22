@@ -22,7 +22,7 @@ import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import { WorkspaceTracker } from './managers/workspaceTracker.js';
 import { SignalTracker } from './managers/signalTracker.js';
-import { computeLayout } from './layout/tilingLayout.js';
+import { computeLayout, DEFAULT_PRIMARY_PERCENT } from './layout/tilingLayout.js';
 import { parseDBusAccess, whenCallerAllowed } from './dbus/callerPolicy.js';
 
 // ── CONST ────────────────────────────────────────────
@@ -1049,7 +1049,7 @@ class Tiler {
         // If respecting maximized windows, don't force unmaximize
 
         // Compute the target rectangle for each window, then apply.
-        const rects = computeLayout(windowsToTile.length, innerArea, this._innerGap);
+        const rects = computeLayout(windowsToTile.length, innerArea, this._innerGap, DEFAULT_PRIMARY_PERCENT);
         windowsToTile.forEach((win, i) => {
             // Re-check validity: a window may have been destroyed between the
             // filter above and here.

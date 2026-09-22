@@ -5,15 +5,22 @@
 Simple-Tiling uses a **pragmatic testing approach** tailored to GNOME Shell extension development:
 
 1. **Sandbox Testing**: Nested GNOME Shell via toolbox for isolated, repeatable testing
-2. **Static Analysis**: ESLint + TypeScript strict mode catch errors at compile-time
-3. **Type Safety as Testing**: Strict TypeScript settings prevent entire classes of runtime errors
-4. **Manual Testing Protocols**: Comprehensive checklist covering critical functionality
+2. **Unit Tests**: Node's built-in runner for modules with no GNOME imports
+3. **Static Analysis**: ESLint + TypeScript strict mode catch errors at compile-time
+4. **Type Safety as Testing**: Strict TypeScript settings prevent entire classes of runtime errors
+5. **Manual Testing Protocols**: Comprehensive checklist covering critical functionality
 
-**Why no traditional unit tests?**
-- GNOME Shell extensions run in the GJS runtime (not Node.js)
-- Cannot mock native GNOME APIs (`Meta.Window`, `Meta.Workspace`, etc.) outside GNOME Shell
-- Industry standard for GNOME extensions: ESLint + TypeScript + manual testing
-- MosaicWM and most production extensions follow this pattern
+**Where unit tests apply**
+- GNOME Shell extensions run in the GJS runtime (not Node.js). Native GNOME APIs (`Meta.Window`, `Meta.Workspace`, etc.) exist only inside GNOME Shell, so code that touches them gets tested in the sandbox (see Sandbox Testing with Toolbox).
+- Modules with no GNOME imports get unit tests with Node's built-in runner. Currently covered: `src/layout/tilingLayout.ts`.
+
+## Unit Tests
+
+```bash
+npm test
+```
+
+Tests live in `tests/*.test.ts` and import the TypeScript sources directly (`../src/layout/tilingLayout.ts`); Node 24 strips the types, so there is no build step and no test dependency. The tests are not type-checked themselves: `tsconfig.json` and ESLint cover only `src/`. Keep new pure logic in modules with no GNOME imports so Node can test it the same way.
 
 ## Static Analysis
 
@@ -322,6 +329,7 @@ Before committing any changes:
 
 - [ ] `npm run build:ts` succeeds with zero errors
 - [ ] `npm run lint` passes with zero errors
+- [ ] `npm test` passes
 - [ ] Manually test at least 3 critical scenarios from protocol above
 - [ ] Check logs for errors, warnings, or GLib issues
 - [ ] Verify extension can be cleanly disabled and re-enabled
