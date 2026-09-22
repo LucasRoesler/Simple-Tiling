@@ -22,7 +22,7 @@ import { Logger } from './utils/logger.js';
 import { TimeoutRegistry } from './managers/timeoutRegistry.js';
 import { WorkspaceTracker } from './managers/workspaceTracker.js';
 import { SignalTracker } from './managers/signalTracker.js';
-import { computeLayout, DEFAULT_PRIMARY_PERCENT } from './layout/tilingLayout.js';
+import { computeLayout, PRIMARY_PERCENT_STEP, stepPrimaryPercent } from './layout/tilingLayout.js';
 import { parseDBusAccess, whenCallerAllowed } from './dbus/callerPolicy.js';
 
 // ── CONST ────────────────────────────────────────────
@@ -53,6 +53,9 @@ const KEYBINDINGS: { [key: string]: (self: InteractionHandler) => void } = {
     'focus-right': (self) => self._focusInDirection('right'),
     'focus-up': (self) => self._focusInDirection('up'),
     'focus-down': (self) => self._focusInDirection('down'),
+    'grow-primary': (self) => self._stepPrimaryWidth(PRIMARY_PERCENT_STEP),
+    'shrink-primary': (self) => self._stepPrimaryWidth(-PRIMARY_PERCENT_STEP),
+    'reset-primary': (self) => self._resetPrimaryWidth(),
 };
 
 // ── HELPER‑FUNCTION ────────────────────────────────────────
@@ -238,6 +241,25 @@ class InteractionHandler {
         src.activate(global.get_current_time());
     }
 
+    // Both resize handlers ignore presses while tiling is disabled, or paused
+    // for a maximized window, where a press is most likely an accident.
+    _resizeBlocked(): boolean {
+        return !this._settings.get_boolean('tiling-enabled') || this.tiler.isPausedForMaximized();
+    }
+
+    _stepPrimaryWidth(delta: number): void {
+        if (this._resizeBlocked()) return;
+        const current = this.tiler.activePrimaryWidth();
+        const next = stepPrimaryPercent(current, delta);
+        if (next === current) return;
+        this.tiler.setActivePrimaryWidth(next);
+    }
+
+    _resetPrimaryWidth(): void {
+        if (this._resizeBlocked()) return;
+        this.tiler.setActivePrimaryWidth(null);
+    }
+
     _findTargetInDirection(src: Meta.Window, dir: string): Meta.Window | null {
         const sRect = src.get_frame_rect(), cand = [];
         for (const win of this.tiler.windows) {
@@ -421,6 +443,7 @@ class Tiler {
     private _innerGap: number;
     private _outerGapVertical: number;
     private _outerGapHorizontal: number;
+    private _primaryWidth: number;
     private _tilingDelay: number;
     private _centeringDelay: number;
     private _exceptions: string[];
@@ -446,6 +469,7 @@ class Tiler {
         this._innerGap = this.settings.get_int('inner-gap');
         this._outerGapVertical = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal = this.settings.get_int('outer-gap-horizontal');
+        this._primaryWidth = this.settings.get_int('primary-width');
 
         this._tilingDelay = TILING_DELAY_MS;
         this._centeringDelay = CENTERING_DELAY_MS;
@@ -538,6 +562,7 @@ class Tiler {
         this._innerGap = this.settings.get_int('inner-gap');
         this._outerGapVertical = this.settings.get_int('outer-gap-vertical');
         this._outerGapHorizontal = this.settings.get_int('outer-gap-horizontal');
+        this._primaryWidth = this.settings.get_int('primary-width');
         this._loadExceptions(); // Reload exceptions when settings change
 
         // If tiling was just re-enabled, tile all current windows
@@ -557,6 +582,24 @@ class Tiler {
         const wmClass = (win.get_wm_class() || "").toLowerCase();
         const appId = (win.get_gtk_application_id() || "").toLowerCase();
         return this._exceptions.includes(wmClass) || this._exceptions.includes(appId);
+    }
+
+    // True while queueTile() holds back for a maximized window.
+    isPausedForMaximized(): boolean {
+        return this.settings.get_boolean('respect-maximized-windows') && this._hasMaximizedWindows();
+    }
+
+    activePrimaryWidth(): number {
+        return this._workspaceTracker.getActiveWorkspaceData()?.primaryWidth ?? this._primaryWidth;
+    }
+
+    // null, or a value equal to the primary-width setting, clears the
+    // workspace's own width so it follows the setting again.
+    setActivePrimaryWidth(percent: number | null): void {
+        const data = this._workspaceTracker.getActiveWorkspaceData();
+        if (!data) return;
+        data.primaryWidth = percent === this._primaryWidth ? null : percent;
+        this.queueTile();
     }
 
     _hasMaximizedWindows(): boolean {
@@ -888,8 +931,7 @@ class Tiler {
         }
 
         // Check if we should respect maximized windows
-        if (this.settings.get_boolean('respect-maximized-windows') &&
-            this._hasMaximizedWindows()) {
+        if (this.isPausedForMaximized()) {
             this._logger.debug('Maximized windows detected, skipping tiling');
             return; // Skip tiling when maximized windows exist
         }
@@ -1039,7 +1081,8 @@ class Tiler {
         // If respecting maximized windows, don't force unmaximize
 
         // Compute the target rectangle for each window, then apply.
-        const rects = computeLayout(windowsToTile.length, innerArea, this._innerGap, DEFAULT_PRIMARY_PERCENT);
+        const rects = computeLayout(windowsToTile.length, innerArea, this._innerGap,
+            data.primaryWidth ?? this._primaryWidth);
         windowsToTile.forEach((win, i) => {
             // Re-check validity: a window may have been destroyed between the
             // filter above and here.

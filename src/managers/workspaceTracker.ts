@@ -10,6 +10,8 @@ import { SignalTracker } from './signalTracker.js';
 export interface WorkspaceData {
     tiled: Meta.Window[];
     exceptions: Meta.Window[];
+    // Primary window width in percent; null follows the primary-width setting.
+    primaryWidth: number | null;
 }
 
 export interface WorkspaceCallbacks {
@@ -51,7 +53,7 @@ export class WorkspaceTracker {
     getWorkspaceData(workspace: Meta.Workspace): WorkspaceData {
         let data = this._workspaceWindows.get(workspace);
         if (!data) {
-            data = { tiled: [], exceptions: [] };
+            data = { tiled: [], exceptions: [], primaryWidth: null };
             this._workspaceWindows.set(workspace, data);
         }
         return data;

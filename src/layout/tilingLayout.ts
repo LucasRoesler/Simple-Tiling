@@ -55,11 +55,11 @@ function splitArea(count: number, area: Rect, innerGap: number): Rect[] {
 }
 
 // Bounds and step for the primary window's share of the width, in percent.
-// The schema's `primary-width` range matches MIN/MAX.
+// The schema's `primary-width` range and the prefs.ts SpinRow adjustment
+// (30/70/5) match these; tests/tilingLayout.test.ts checks the schema range.
 export const MIN_PRIMARY_PERCENT = 30;
 export const MAX_PRIMARY_PERCENT = 70;
 export const PRIMARY_PERCENT_STEP = 5;
-export const DEFAULT_PRIMARY_PERCENT = 50;
 
 /** Move `current` by `delta` percent, clamped to the primary width bounds. */
 export function stepPrimaryPercent(current: number, delta: number): number {
