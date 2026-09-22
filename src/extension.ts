@@ -113,9 +113,6 @@ class InteractionHandler {
 
         // Shortcuts are bound by setShortcutsEnabled(), which the extension
         // calls according to the lock state.
-        this._signals.connect('settings-changed', this._settings, 'changed',
-            () => this._onSettingsChanged());
-
         this._signals.connect('grab-op-begin', global.display, 'grab-op-begin',
             (_display: Meta.Display, win: Meta.Window, op: Meta.GrabOp) => {
                 if (this.tiler.windows.includes(win)) {
@@ -169,13 +166,6 @@ class InteractionHandler {
         for (const key in KEYBINDINGS) {
             Main.wm.removeKeybinding(key);
         }
-    }
-
-    _onSettingsChanged(): void {
-        // Shortcuts stay unbound while the screen is locked.
-        if (!this._shortcutsBound) return;
-        this._unbindAllShortcuts();
-        this._bindAllShortcuts();
     }
 
     _prepareWmShortcuts(): void {
