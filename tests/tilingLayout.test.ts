@@ -1,11 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
     computeLayout,
     stepPrimaryPercent,
     MAX_PRIMARY_PERCENT,
     MIN_PRIMARY_PERCENT,
+    PRIMARY_PERCENT_STEP,
     type Rect,
 } from '../src/layout/tilingLayout.ts';
 
@@ -117,5 +119,20 @@ describe('stepPrimaryPercent', () => {
 
     it('clamps at 30', () => {
         assert.equal(stepPrimaryPercent(30, -5), 30);
+    });
+});
+
+describe('primary width bounds', () => {
+    it('match the primary-width range in the schema', () => {
+        const schema = readFileSync(new URL(
+            '../schemas/org.gnome.shell.extensions.simple-tiling.lucasroesler.gschema.xml',
+            import.meta.url), 'utf8');
+        const key = /<key name="primary-width"[\s\S]*?<\/key>/.exec(schema)?.[0] ?? '';
+        const range = /<range min="(\d+)" max="(\d+)"\/>/.exec(key);
+        assert.deepEqual([Number(range?.[1]), Number(range?.[2])], [MIN_PRIMARY_PERCENT, MAX_PRIMARY_PERCENT]);
+    });
+
+    it('are a whole number of steps apart', () => {
+        assert.equal((MAX_PRIMARY_PERCENT - MIN_PRIMARY_PERCENT) % PRIMARY_PERCENT_STEP, 0);
     });
 });

@@ -49,6 +49,22 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
         groupGaps.add(rowOuterV);
         settings.bind('outer-gap-vertical', rowOuterV, 'value', Gio.SettingsBindFlags.DEFAULT);
 
+        // ── WINDOW LAYOUT ──────────────────────────────────────────
+        const groupLayout = new Adw.PreferencesGroup({
+            title: 'Window Layout',
+            description: 'The resize shortcuts change the width per workspace until logout.'
+        });
+        page.add(groupLayout);
+
+        const rowPrimaryWidth = new Adw.SpinRow({
+            title: 'Default Primary Width',
+            subtitle: 'Share of the screen width for the primary window (percent)',
+            adjustment: new Gtk.Adjustment({ lower: 30, upper: 70, step_increment: 5 }),
+            snap_to_ticks: true,
+        });
+        groupLayout.add(rowPrimaryWidth);
+        settings.bind('primary-width', rowPrimaryWidth, 'value', Gio.SettingsBindFlags.DEFAULT);
+
         // ── WINDOW BEHAVIOR ────────────────────────────────────────────
         const groupBehavior = new Adw.PreferencesGroup({ title: 'Window Behavior' });
         page.add(groupBehavior);
@@ -500,6 +516,20 @@ export default class SimpleTilingPrefs extends ExtensionPreferences {
             'Focus Up', 'Move focus to window above');
         this._addKeybindingRow(focusExpanderRow, settings, 'focus-down',
             'Focus Down', 'Move focus to window below');
+
+        // Primary width shortcuts
+        const resizeExpanderRow = new Adw.ExpanderRow({
+            title: 'Primary Width',
+            subtitle: 'Resize the primary window on the active workspace'
+        });
+        groupKeys.add(resizeExpanderRow);
+
+        this._addKeybindingRow(resizeExpanderRow, settings, 'grow-primary',
+            'Widen Primary', 'Widen the primary window by 5%');
+        this._addKeybindingRow(resizeExpanderRow, settings, 'shrink-primary',
+            'Narrow Primary', 'Narrow the primary window by 5%');
+        this._addKeybindingRow(resizeExpanderRow, settings, 'reset-primary',
+            'Reset Primary Width', 'Return to the default primary width');
     }
 
     _addKeybindingRow(parent: Adw.ExpanderRow, settings: Gio.Settings, key: string, title: string, subtitle: string): void {

@@ -40,6 +40,26 @@
       <summary>Focus window to the right.</summary>
     </key>
 
+    <key name="grow-primary" type="as">
+      <default><![CDATA[['<Super><Control><Shift>Right']]]></default>
+      <summary>Widen the primary window on the active workspace.</summary>
+    </key>
+    <key name="shrink-primary" type="as">
+      <default><![CDATA[['<Super><Control><Shift>Left']]]></default>
+      <summary>Narrow the primary window on the active workspace.</summary>
+    </key>
+    <key name="reset-primary" type="as">
+      <default><![CDATA[['<Super><Control><Shift>0']]]></default>
+      <summary>Reset the primary window on the active workspace to the default width.</summary>
+    </key>
+
+    <key name="primary-width" type="i">
+      <range min="30" max="70"/>
+      <default>50</default>
+      <summary>Default width of the primary window, in percent.</summary>
+      <description>Share of the screen width for the primary window on workspaces without their own width. The resize shortcuts set a per-workspace width in 5% steps, kept until logout.</description>
+    </key>
+
     <key name="inner-gap" type="i">
       <default>10</default>
       <summary>The gap between windows in pixels.</summary>

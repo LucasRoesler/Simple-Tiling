@@ -133,8 +133,8 @@ Before each release, manually verify the following scenarios:
 
 - [ ] **Open Multiple Windows (5+)**
   - Windows automatically tile in primary-stack layout
-  - First window is primary (left half)
-  - Remaining windows stack (right half)
+  - First window is primary (left, Default Primary Width, 50% by default)
+  - Remaining windows stack (right)
   - Gaps applied correctly (inner, outer-horizontal, outer-vertical)
 
 - [ ] **Close Windows**
@@ -201,7 +201,32 @@ Before each release, manually verify the following scenarios:
   - Switch between Primary-Stack and Fibonacci
   - Windows retile with new layout algorithm
 
-#### 7. Edge Cases
+- [ ] **Change a Shortcut**
+  - Rebind a shortcut in prefs (e.g. Widen Primary)
+  - The new binding works at once, without disabling and re-enabling the extension
+
+#### 7. Primary Width
+
+- [ ] **Resize with Shortcuts**
+  - `Super+Ctrl+Shift+Right` widens the primary by 5% per press, up to 70%
+  - `Super+Ctrl+Shift+Left` narrows it by 5% per press, down to 30%
+  - Presses past either limit change nothing
+  - At 40% and below on a 16:9 screen, the stack splits into columns
+
+- [ ] **Per-Workspace Widths**
+  - Set different widths on two workspaces; switching keeps each one
+  - Lock and unlock; both widths survive
+  - `Super+Ctrl+Shift+0` returns the active workspace to the default
+
+- [ ] **Default Width in Prefs**
+  - Change Default Primary Width; workspaces without their own width follow
+  - Workspaces with their own width keep it
+
+- [ ] **Ignored Presses**
+  - With Respect Maximized Windows on, maximize a window: resize shortcuts do nothing, and the old width returns on unmaximize
+  - With tiling disabled, resize shortcuts do nothing
+
+#### 8. Edge Cases
 
 - [ ] **Single Window**
   - Single window maximizes to work area (respecting gaps)
@@ -221,7 +246,7 @@ Before each release, manually verify the following scenarios:
   - Each monitor tiles independently
   - Windows stay on correct monitor
 
-#### 8. Performance
+#### 9. Performance
 
 - [ ] **Tiling Lag**
   - Open 10+ windows
@@ -233,7 +258,7 @@ Before each release, manually verify the following scenarios:
   - Check GNOME Shell memory usage (should not grow significantly)
   - Verify WeakMaps allow garbage collection
 
-#### 9. Error Handling
+#### 10. Error Handling
 
 - [ ] **Invalid Window Detection**
   - Open window, close it, trigger retiling
