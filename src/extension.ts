@@ -352,8 +352,11 @@ const TilingToggle = GObject.registerClass(
     // not typecheck. Do not "fix" this.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     class TilingToggle extends (QuickSettings.QuickMenuToggle as any) {
-        private _extensionObject!: SimpleTilingExtension;
-        private _settings!: Gio.Settings;
+        // `declare` emits no class field: GJS runs _init() before class
+        // fields initialise, so an emitted field would reset these to
+        // undefined right after _init assigned them.
+        private declare _extensionObject: SimpleTilingExtension;
+        private declare _settings: Gio.Settings;
 
         _init(extensionObject: SimpleTilingExtension) {
             super._init({
@@ -391,6 +394,9 @@ const TilingToggle = GObject.registerClass(
         destroy(): void {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             Gio.Settings.unbind(this as any, 'checked');
+            // QuickMenuToggle does not destroy its menu, and the indicator is
+            // rebuilt on every unlock, so each cycle would leak one.
+            this.menu.destroy();
             super.destroy();
         }
     });
@@ -403,7 +409,7 @@ const SimpleTilingIndicator = GObject.registerClass(
     class SimpleTilingIndicator extends (QuickSettings.SystemIndicator as any) {
         // GNOME-internal members the @girs types don't model.
         /* eslint-disable @typescript-eslint/no-explicit-any */
-        private _tilingToggle?: any;
+        private declare _tilingToggle: any;
         public declare quickSettingsItems: any[];
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
