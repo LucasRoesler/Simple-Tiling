@@ -10,6 +10,7 @@ import { Extension, gettext as _ } from 'resource:///org/gnome/shell/extensions/
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
+import type * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 
 import Meta from 'gi://Meta';
 import Gio from 'gi://Gio';
@@ -24,6 +25,7 @@ import { WorkspaceTracker } from './managers/workspaceTracker.js';
 import { SignalTracker } from './managers/signalTracker.js';
 import { computeLayout, PRIMARY_PERCENT_STEP, stepPrimaryPercent } from './layout/tilingLayout.js';
 import { parseDBusAccess, whenCallerAllowed } from './dbus/callerPolicy.js';
+import { createShortcutsDialog } from './ui/shortcutsDialog.js';
 
 // ── CONST ────────────────────────────────────────────
 const WM_SCHEMA = 'org.gnome.desktop.wm.keybindings';
@@ -381,6 +383,9 @@ const TilingToggle = GObject.registerClass(
             // Add force retiling action
             this.menu.addAction(_('Force Retiling'),
                 () => this._extensionObject.tiler?.tileNow());
+
+            this.menu.addAction(_('Show Shortcuts'),
+                () => this._extensionObject.showShortcuts());
 
             // Add settings menu item
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -1109,6 +1114,7 @@ export default class SimpleTilingExtension extends Extension {
     private _indicator?: any;
     private _dbus?: Gio.DBusExportedObject;
     private _signals?: SignalTracker;
+    private _shortcutsDialog?: ModalDialog.ModalDialog;
 
     override enable(): void {
         this.tiler = new Tiler(this);
@@ -1137,10 +1143,34 @@ export default class SimpleTilingExtension extends Extension {
         }
     }
 
+    showShortcuts(): void {
+        if (!this.tiler || this._shortcutsDialog) return;
+        const dialog = createShortcutsDialog(this.tiler.settings);
+        // GNOME 48 and 49 return false when the modal grab fails, leaving the
+        // dialog closed: it never emits destroy, so drop it here.
+        if (!dialog.open()) {
+            dialog.destroy();
+            return;
+        }
+        this._shortcutsDialog = dialog;
+        // destroyOnClose drops the dialog, so forget it once it is gone.
+        dialog.connect('destroy', () => {
+            if (this._shortcutsDialog === dialog) this._shortcutsDialog = undefined;
+        });
+    }
+
+    _closeShortcuts(): void {
+        // destroy(), not close(): closing animates, and the extension may be
+        // gone before the animation ends.
+        this._shortcutsDialog?.destroy();
+        this._shortcutsDialog = undefined;
+    }
+
     _syncLockState(): void {
         const locked: boolean = Main.sessionMode.isLocked;
         this.tiler?.setShortcutsEnabled(!locked);
         if (locked) {
+            this._closeShortcuts();
             this._removeUserInterfaces();
         } else {
             this._addUserInterfaces();
@@ -1161,6 +1191,8 @@ export default class SimpleTilingExtension extends Extension {
     }
 
     _removeUserInterfaces(): void {
+        this._closeShortcuts();
+
         if (this._dbus) {
             this._dbus.flush();
             this._dbus.unexport();
